@@ -18,11 +18,11 @@ const vertices = new Float32Array([
 ])
 
 const indexes = new Uint32Array([
-    0, 1, 3,
+    3, 1, 0,
     0, 2, 3,
-    0, 1, 4,
+    4, 1, 0,
 
-    5, 6, 7
+    7, 6, 5
 ])
 
 const shaders = `
@@ -34,8 +34,13 @@ struct ViewUniforms {
     view: mat4x4<f32>
 }
 
+struct ModelUniforms {
+    model: mat4x4<f32>
+}
+
 @group(0) @binding(0) var<uniform> colorUniforms: ColorUniforms;
 @group(0) @binding(1) var<uniform> viewUniforms: ViewUniforms;
+@group(0) @binding(2) var<uniform> modelUniforms: ModelUniforms;
 
 struct VertexOut {
   @builtin(position) position : vec4f,
@@ -46,16 +51,17 @@ struct VertexOut {
 fn vertex_main(@location(0) position: vec4f,
                @location(1) color: vec4f) -> VertexOut
 {
-  var output : VertexOut;
-  output.position = viewUniforms.view * vec4<f32>(position.xyz, 1.0);
-  output.color = color;
-  return output;
+    var output : VertexOut;
+    output.position = viewUniforms.view * modelUniforms.model * vec4<f32>(position.xyz, 1.0);
+    output.color = color;
+    return output;
 }
 
 @fragment
 fn fragment_main(fragData: VertexOut) -> @location(0) vec4f
 {
-  return fragData.color;
+    
+    return fragData.color;
 }
 `
 
@@ -67,6 +73,7 @@ var indexBuffer
 var colourUBuffer
 var bindGroup
 var viewBuffer
+var modelBuffer
 var depthTexture
 
 var colourData = new Float32Array([
@@ -93,6 +100,17 @@ function getViewMatrix() {
     mat4.invert(view, view)
 
     return mat4.multiply(mat4.create(), projection, view)
+}
+
+function getModelMatrix(x, y, z, rotx, roty, rotz) {
+    let model = mat4.create()
+
+    mat4.translate(model, model, [x, y, z])
+    mat4.rotateY(model, model, roty)
+    mat4.rotateX(model, model, rotx)
+    mat4.rotateZ(model, model, rotz)
+
+    return model
 }
 
 async function init() {
@@ -144,6 +162,13 @@ async function init() {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     })
 
+    let modelMatrix = getModelMatrix(0, 0, 0, 0, 0, 0)
+
+    modelBuffer = device.createBuffer({
+        size: modelMatrix.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    })
+
     const bindGroupLayout = device.createBindGroupLayout({
         entries: [
             {
@@ -153,6 +178,11 @@ async function init() {
             },
             {
                 binding: 1,
+                visibility: GPUShaderStage.VERTEX,
+                buffer: { type: 'uniform' }
+            },
+            {
+                binding: 2,
                 visibility: GPUShaderStage.VERTEX,
                 buffer: { type: 'uniform' }
             }
@@ -172,6 +202,12 @@ async function init() {
                 binding: 1,
                 resource: {
                     buffer: viewBuffer
+                }
+            },
+            {
+                binding: 2,
+                resource: {
+                    buffer: modelBuffer
                 }
             }
         ]
@@ -214,7 +250,8 @@ async function init() {
             ]
         },
         primitive: {
-            topology: "triangle-list"
+            topology: "triangle-list",
+            // cullMode: "back",
         },
         depthStencil: {
             depthWriteEnabled: true,
@@ -232,6 +269,8 @@ var delta = 0
 var lastTime = 0
 var su = 0
 
+var time = 0
+
 var speed = 2
 
 function frame(timestamp) {
@@ -240,6 +279,8 @@ function frame(timestamp) {
     ui.resizeCanvas()
     ui.getSu()
     input.setGlobals()
+
+    time += delta
 
     gpucanvas.width = window.innerWidth
     gpucanvas.height = window.innerHeight
@@ -272,9 +313,11 @@ function frame(timestamp) {
     }
 
     var viewProjection = getViewMatrix()
+    var modelMatrix = getModelMatrix(Math.sin(time), 0, 0, 0, 0, 0)
 
     device.queue.writeBuffer(colourUBuffer, 0, colourData, 0, colourData.length)
     device.queue.writeBuffer(viewBuffer, 0, viewProjection, 0, viewProjection.length)
+    device.queue.writeBuffer(modelBuffer, 0, modelMatrix, 0, modelMatrix.length)
 
     const commandEncoder = device.createCommandEncoder()
 
@@ -297,11 +340,12 @@ function frame(timestamp) {
         depthLoadOp: 'clear',
         depthStoreOp: 'store',
       },
-    };
+    }
   
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
       
     passEncoder.setPipeline(renderPipeline)
+
     passEncoder.setVertexBuffer(0, vertexBuffer)
     passEncoder.setIndexBuffer(indexBuffer, "uint32")
     passEncoder.setBindGroup(0, bindGroup)
