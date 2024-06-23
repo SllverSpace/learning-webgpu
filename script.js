@@ -86,7 +86,7 @@ gpucanvas.style.left = 0
 gpucanvas.style.top = 0
 
 var fov = 60
-var camera = {pos: {x: 0, y: 0, z: -3}, rot: {x: 0, y: 0, z: 0}}
+var camera = {pos: {x: 0, y: 0, z: -2}, rot: {x: 0, y: 0, z: 0}}
 
 function getViewMatrix() {
     let view = mat4.create()
@@ -313,7 +313,7 @@ function frame(timestamp) {
     }
 
     var viewProjection = getViewMatrix()
-    var modelMatrix = getModelMatrix(Math.sin(time), 0, 0, 0, 0, 0)
+    var modelMatrix = getModelMatrix(0, 0, 0, 0, time, 0)
 
     device.queue.writeBuffer(colourUBuffer, 0, colourData, 0, colourData.length)
     device.queue.writeBuffer(viewBuffer, 0, viewProjection, 0, viewProjection.length)
