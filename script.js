@@ -3,90 +3,8 @@ utils.setup()
 utils.setStyles()
 utils.setGlobals()
 
-const clearColor = { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
-
-const vertices = new Float32Array([
-    0.0, 0.0, 0,    1, 0, 0, 1,
-    0.0, 0.5, 0,    1, 1, 0, 1,
-    0.5, 0.0, 0,    0, 1, 0, 1,
-    0.5, 0.5, 0,    0, 0, 1, 1,
-    1.0, 0.5, -1.0, 0, 0, 1, 1,
-
-    0.0, 0.0, -1.0, 1, 0, 0, 1,
-    0.0, 0.5, -1.0, 1, 0, 0, 1,
-    0.5, 0.0, -1.0, 1, 0, 0, 1
-])
-
-const indexes = new Uint32Array([
-    3, 1, 0,
-    0, 2, 3,
-    4, 1, 0,
-
-    7, 6, 5
-])
-
-const shaders = `
-struct ColorUniforms {
-    color: vec4<f32>
-}
-
-struct ViewUniforms {
-    view: mat4x4<f32>
-}
-
-struct ModelUniforms {
-    model: mat4x4<f32>
-}
-
-@group(0) @binding(0) var<uniform> colorUniforms: ColorUniforms;
-@group(0) @binding(1) var<uniform> viewUniforms: ViewUniforms;
-@group(0) @binding(2) var<uniform> modelUniforms: ModelUniforms;
-
-struct VertexOut {
-  @builtin(position) position : vec4f,
-  @location(0) color : vec4f
-}
-
-@vertex
-fn vertex_main(@location(0) position: vec4f,
-               @location(1) color: vec4f) -> VertexOut
-{
-    var output : VertexOut;
-    output.position = viewUniforms.view * modelUniforms.model * vec4<f32>(position.xyz, 1.0);
-    output.color = color;
-    return output;
-}
-
-@fragment
-fn fragment_main(fragData: VertexOut) -> @location(0) vec4f
-{
-    
-    return fragData.color;
-}
-`
-
-var device
-var context
-var renderPipeline
-var vertexBuffer
-var indexBuffer
-var colourUBuffer
-var bindGroup
-var viewBuffer
-var modelBuffer
-var depthTexture
-
-var colourData = new Float32Array([
-    0, 0, 0, 1
-])
-
-var gpucanvas = document.getElementById("gpucanvas")
-gpucanvas.style.position = "absolute"
-gpucanvas.style.left = 0
-gpucanvas.style.top = 0
-
 var fov = 60
-var camera = {pos: {x: 0, y: 0, z: -2}, rot: {x: 0, y: 0, z: 0}}
+var camera = {pos: {x: 0, y: 0, z: 0}, rot: {x: 0, y: 0, z: 0}}
 
 function getViewMatrix() {
     let view = mat4.create()
@@ -105,165 +23,74 @@ function getViewMatrix() {
 function getModelMatrix(x, y, z, rotx, roty, rotz) {
     let model = mat4.create()
 
-    mat4.translate(model, model, [x, y, z])
-    mat4.rotateY(model, model, roty)
-    mat4.rotateX(model, model, rotx)
-    mat4.rotateZ(model, model, rotz)
+    mat4.translate(model, model, [x, y, -z])
+    mat4.rotateY(model, model, -roty)
+    mat4.rotateX(model, model, -rotx)
+    mat4.rotateZ(model, model, -rotz)
+
+    mat4.scale(model, model, [1, 1, -1])
+
+    // mat4.invert(model, model)
 
     return model
 }
 
-async function init() {
-    if (!navigator.gpu) {
-        throw Error('WebGPU not supported.');
+webgpu.onReady = () => {requestAnimationFrame(frame)}
+
+webgpu.setup()
+webgpu.setStyles()
+
+for (let x = 0; x < 10; x++) {
+    for (let y = 0; y < 10; y++) {
+        for (let z = 0; z < 10; z++) {
+            var test = new webgpu.Mesh(x, y, z+3, 1, 1, 1, [
+                0, 1, 0,
+                0, 0, 0,
+                1, 0, 0
+            ],
+            [
+                0, 1, 2
+            ])
+        }
     }
-
-    const adapter = await navigator.gpu.requestAdapter()
-    if (!adapter) {
-        throw Error('Couldn\'t request WebGPU adapter.')
-    }
-
-    device = await adapter.requestDevice()
-
-    const shaderModule = device.createShaderModule({
-        code: shaders
-    })
-
-    context = gpucanvas.getContext("webgpu")
-
-    context.configure({
-        device: device,
-        format: navigator.gpu.getPreferredCanvasFormat(),
-        alphaMode: 'premultiplied'
-    })
-
-    vertexBuffer = device.createBuffer({
-        size: vertices.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    })
-
-    device.queue.writeBuffer(vertexBuffer, 0, vertices, 0, vertices.length)
-    indexBuffer = device.createBuffer({
-        size: indexes.byteLength,
-        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-    })
-
-    device.queue.writeBuffer(indexBuffer, 0, indexes, 0, indexes.length)
-
-    colourUBuffer = device.createBuffer({
-        size: colourData.byteLength,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    })
-
-    let viewMatrix = getViewMatrix()
-
-    viewBuffer = device.createBuffer({
-        size: viewMatrix.byteLength,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    })
-
-    let modelMatrix = getModelMatrix(0, 0, 0, 0, 0, 0)
-
-    modelBuffer = device.createBuffer({
-        size: modelMatrix.byteLength,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    })
-
-    const bindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.FRAGMENT,
-                buffer: { type: 'uniform' }
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.VERTEX,
-                buffer: { type: 'uniform' }
-            },
-            {
-                binding: 2,
-                visibility: GPUShaderStage.VERTEX,
-                buffer: { type: 'uniform' }
-            }
-        ]
-    })
-
-    bindGroup = device.createBindGroup({
-        layout: bindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: colourUBuffer
-                }
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: viewBuffer
-                }
-            },
-            {
-                binding: 2,
-                resource: {
-                    buffer: modelBuffer
-                }
-            }
-        ]
-    })
-
-
-
-    var pipelineLayout = device.createPipelineLayout({
-        bindGroupLayouts: [bindGroupLayout]
-    })
-
-    renderPipeline = device.createRenderPipeline({
-        layout: pipelineLayout,
-        vertex: {
-            module: shaderModule,
-            entryPoint: "vertex_main",
-            buffers: [
-                {
-                    arrayStride: 7 * 4,
-                    attributes: [
-                        {
-                            shaderLocation: 0,
-                            offset: 0,
-                            format: "float32x3"
-                        },
-                        {
-                            shaderLocation: 1,
-                            offset: 4 * 3,
-                            format: "float32x4"
-                        }
-                    ]
-                }
-            ]
-        },
-        fragment: {
-            module: shaderModule,
-            entryPoint: "fragment_main",
-            targets: [
-                {format: navigator.gpu.getPreferredCanvasFormat()}
-            ]
-        },
-        primitive: {
-            topology: "triangle-list",
-            // cullMode: "back",
-        },
-        depthStencil: {
-            depthWriteEnabled: true,
-            depthCompare: "less",
-            format: "depth24plus",
-        },
-    })
-        
-    requestAnimationFrame(frame)
 }
 
-init()
+
+var test2 = new webgpu.Mesh(-3, 0, 0, 1, 1, 1, [
+    0, 1, 0,
+    0, 0, 0,
+    0, 0, 1
+],
+[
+    0, 1, 2
+])
+
+test2.colours = [
+    1, 0, 0, 1,
+    0, 1, 0, 1,
+    0, 0, 1, 1
+]
+test2.updateBuffers()
+
+var coolBox = new webgpu.Box(0, 0, -3, 1, 1, 1, [0, 0.5, 1])
+
+var ground = new webgpu.Mesh(0, -0.5, 0, 1, 1, 1, [
+    -10, 0, -10,
+    10, 0, 10,
+    -10, 0, 10,
+    10, 0, -10
+],
+[
+    0, 3, 1,
+    2, 1, 0
+])
+ground.colours = [
+    0, 0.5, 0, 1,
+    0, 1, 0, 1,
+    0, 0.75, 0, 1,
+    0, 0.65, 0, 1
+]
+
 
 var delta = 0
 var lastTime = 0
@@ -271,7 +98,9 @@ var su = 0
 
 var time = 0
 
-var speed = 2
+var speed = 3
+
+var viewProjection
 
 function frame(timestamp) {
 
@@ -312,49 +141,13 @@ function frame(timestamp) {
         input.lockMouse()
     }
 
-    var viewProjection = getViewMatrix()
-    var modelMatrix = getModelMatrix(0, 0, 0, 0, time, 0)
+    viewProjection = getViewMatrix()
+    
+    test2.rot.y = time
 
-    device.queue.writeBuffer(colourUBuffer, 0, colourData, 0, colourData.length)
-    device.queue.writeBuffer(viewBuffer, 0, viewProjection, 0, viewProjection.length)
-    device.queue.writeBuffer(modelBuffer, 0, modelMatrix, 0, modelMatrix.length)
+    device.queue.writeBuffer(webgpu.uniforms.view[0], 0, viewProjection, 0, viewProjection.length)
 
-    const commandEncoder = device.createCommandEncoder()
-
-    depthTexture = device.createTexture({
-        size: [gpucanvas.width, gpucanvas.height],
-        format: "depth24plus",
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    })
-
-    const renderPassDescriptor = {
-      colorAttachments: [{
-        clearValue: clearColor,
-        loadOp: 'clear',
-        storeOp: 'store',
-        view: context.getCurrentTexture().createView()
-      }],
-      depthStencilAttachment: {
-        view: depthTexture.createView(),
-        depthClearValue: 1.0,
-        depthLoadOp: 'clear',
-        depthStoreOp: 'store',
-      },
-    }
-  
-    const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
-      
-    passEncoder.setPipeline(renderPipeline)
-
-    passEncoder.setVertexBuffer(0, vertexBuffer)
-    passEncoder.setIndexBuffer(indexBuffer, "uint32")
-    passEncoder.setBindGroup(0, bindGroup)
-
-    passEncoder.drawIndexed(indexes.length, 1, 0, 0, 0)
-  
-    passEncoder.end()
-  
-    device.queue.submit([commandEncoder.finish()])
+    webgpu.render([0.4, 0.8, 1, 1])
 
     input.updateInput()
 
@@ -364,8 +157,8 @@ function frame(timestamp) {
 var sensitivity = 0.002
 
 input.mouseMove = (event) => {
-    this.mouse.x = event.clientX/ui.scale
-    this.mouse.y = event.clientY/ui.scale
+    input.mouse.x = event.clientX/ui.scale
+    input.mouse.y = event.clientY/ui.scale
 
     if (input.isMouseLocked()) {
         camera.rot.x += event.movementY*sensitivity
