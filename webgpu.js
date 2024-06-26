@@ -1,12 +1,13 @@
 
 class WebGPU {
     meshes = []
-    shaders = `
+    dShaders = `
         @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
-        @group(0) @binding(1) var<uniform> uModel: mat4x4<f32>;
-        @group(0) @binding(2) var uSampler: sampler;
-        @group(0) @binding(3) var uTexture: texture_2d<f32>;
-        @group(0) @binding(4) var<uniform> useTexture: u32;
+        @group(0) @binding(1) var<uniform> uProjection: mat4x4<f32>;
+        @group(0) @binding(2) var<uniform> uModel: mat4x4<f32>;
+        @group(0) @binding(3) var uSampler: sampler;
+        @group(0) @binding(4) var uTexture: texture_2d<f32>;
+        @group(0) @binding(5) var<uniform> useTexture: u32;
 
         struct VertexOut {
         @builtin(position) position : vec4f,
@@ -19,7 +20,7 @@ class WebGPU {
                     @location(1) color: vec4f, @location(2) uv: vec2f) -> VertexOut
         {
             var output : VertexOut;
-            output.position = uView * uModel * vec4<f32>(position.xyz, 1.0);
+            output.position = uProjection * uView * uModel * vec4<f32>(position.xyz, 1.0);
             output.color = color;
             output.uv = uv;
             return output;
@@ -37,13 +38,16 @@ class WebGPU {
             return color;
         }
     `
-    uniforms = {
+    dShaderName = "default"
+    dUniforms = {
         view: [null, 0, 16*4, 0, true],
-        model: [null, 1, 16*4, 0, false],
-        sampler: [null, 2, 0, 1, false, true, {sampler: {type: "non-filtering"}}],
-        texture: [null, 3, 0, 1, false, true, {texture: {sampleType: "float"}}],
-        useTexture: [null, 4, 4, 1, false]
+        projection: [null, 1, 16*4, 0, true],
+        model: [null, 2, 16*4, 0, false],
+        sampler: [null, 3, 0, 1, false, true, {sampler: {type: "non-filtering"}}],
+        texture: [null, 4, 0, 1, false, true, {texture: {sampleType: "float"}}],
+        useTexture: [null, 5, 4, 1, false]
     }
+    uniforms = {}
     vertexConfig = {
         entryPoint: "vertex_main",
         buffers: [
@@ -72,6 +76,7 @@ class WebGPU {
     fragmentConfig = {
         entryPoint: "fragment_main",
     }
+    shaders = {}
     samplers = []
     meshes = []
     textures = []
@@ -90,10 +95,6 @@ class WebGPU {
         }
     
         window.device = await this.adapter.requestDevice()
-    
-        this.shaderModule = device.createShaderModule({
-            code: this.shaders
-        })
 
         window.gpuctx = gpucanvas.getContext("webgpu")
         
@@ -118,71 +119,17 @@ class WebGPU {
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
         })
 
-        var layout = {entries: []}
-
-        for (let name in this.uniforms) {
-            if (this.uniforms[name][4]) {
-                this.uniforms[name][0] = device.createBuffer({
-                    size: this.uniforms[name][2],
-                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-                })
-            }
-            let entry = {
-                binding: this.uniforms[name][1],
-                visibility: this.uniforms[name][3] == 0 ? GPUShaderStage.VERTEX : GPUShaderStage.FRAGMENT,
-            }
-           
-            if (this.uniforms[name][6]) {
-                entry = {...entry, ...this.uniforms[name][6]}
-            } else {
-                entry.buffer = { type: "uniform" }
-            }
-            layout.entries.push(entry)
-        }
-
-        this.bindGroupLayout = device.createBindGroupLayout(layout)
-
         for (let texture of this.textures) {
             texture.init(texture.src)
         }
 
-        this.pipelineLayout = device.createPipelineLayout({
-            bindGroupLayouts: [this.bindGroupLayout]
-        })
-
-        var pipelineFormat = {
-            layout: this.pipelineLayout, 
-            primitive: {
-                topology: "triangle-list",
-            },
-            vertex: {
-                module: this.shaderModule,
-                ...this.vertexConfig
-            },
-            fragment: {
-                module: this.shaderModule,
-                ...this.fragmentConfig,
-                targets: [
-                    {format: navigator.gpu.getPreferredCanvasFormat()}
-                ]
-            },
-            depthStencil: {
-                depthWriteEnabled: true,
-                depthCompare: "less",
-                format: "depth24plus",
-            },
-        }
-
-        this.pipeline = device.createRenderPipeline(pipelineFormat)
-        pipelineFormat.primitive.cullMode = "back"
-        pipelineFormat.primitive.frontFace = "ccw"
-        this.cullPipeline = device.createRenderPipeline(pipelineFormat)
-
         for (let mesh of this.meshes) {
+            this.createShader(mesh.shaderName, mesh.shaders, mesh.uniforms, mesh.vertexConfig, mesh.fragmentConfig)
+            let bindGroupLayout = this.shaders[mesh.shaderName].bindGroupLayout
             if (mesh.texture && mesh.texture.loaded) {
-                mesh.createBindGroup(this.bindGroupLayout, [this.samplers[mesh.sampler], mesh.texture.texture.createView()])
+                mesh.createBindGroup(bindGroupLayout, [this.samplers[mesh.sampler], mesh.texture.texture.createView()])
             } else {
-                mesh.createBindGroup(this.bindGroupLayout, [this.samplers[0], this.dTexture.createView()])
+                mesh.createBindGroup(bindGroupLayout, [this.samplers[0], this.dTexture.createView()])
             }
             mesh.updateBuffers()
         }
@@ -198,6 +145,92 @@ class WebGPU {
     }
     onReady() {
 
+    }
+    createShader(name, shaders, uniforms, vertexConfig, fragmentConfig) {
+        if (!(name in this.shaders)) {
+            let shaderModule = device.createShaderModule({
+                code: shaders
+            })
+
+            let layout = {entries: []}
+
+            uniforms = JSON.parse(JSON.stringify(uniforms))
+            for (let name in uniforms) {
+                if (uniforms[name][4]) {
+                    uniforms[name][0] = device.createBuffer({
+                        size: uniforms[name][2],
+                        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                    })
+                }
+                let entry = {
+                    binding: uniforms[name][1],
+                    visibility: uniforms[name][3] == 0 ? GPUShaderStage.VERTEX : GPUShaderStage.FRAGMENT,
+                }
+               
+                if (uniforms[name][6]) {
+                    entry = {...entry, ...uniforms[name][6]}
+                } else {
+                    entry.buffer = { type: "uniform" }
+                }
+                layout.entries.push(entry)
+            }
+    
+            let bindGroupLayout = device.createBindGroupLayout(layout)
+
+            let pipelineLayout = device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout]
+            })
+    
+            let pipelineFormat = {
+                layout: pipelineLayout, 
+                primitive: {
+                    topology: "triangle-list",
+                },
+                vertex: {
+                    module: shaderModule,
+                    ...vertexConfig
+                },
+                fragment: {
+                    module: shaderModule,
+                    ...fragmentConfig,
+                    targets: [
+                        {format: navigator.gpu.getPreferredCanvasFormat()}
+                    ]
+                },
+                depthStencil: {
+                    depthWriteEnabled: true,
+                    depthCompare: "less",
+                    format: "depth24plus",
+                },
+            }
+    
+            let pipeline = device.createRenderPipeline(pipelineFormat)
+            pipelineFormat.primitive.cullMode = "back"
+            pipelineFormat.primitive.frontFace = "ccw"
+            let cullPipeline = device.createRenderPipeline(pipelineFormat)
+
+            this.shaders[name] = {
+                uniforms: uniforms,
+                bindGroupLayout: bindGroupLayout,
+                pipeline: pipeline,
+                cullPipeline: cullPipeline
+            }
+        }
+    }
+    setShader(passEncoder, shader, cull) {
+        if (shader in this.shaders) {
+            let pipeline = cull ? this.shaders[shader].cullPipeline : this.shaders[shader].pipeline
+            if (pipeline != this.cPipeline) {
+                passEncoder.setPipeline(pipeline)
+                this.justChanged = true
+                this.cPipeline = pipeline
+            }
+        }
+    }
+    setGlobalUniform(name, buffer) {
+        for (let shader in this.shaders) {
+            device.queue.writeBuffer(webgpu.shaders[shader].uniforms[name][0], 0, buffer, 0, buffer.length)
+        }
     }
     render(background=[0, 0, 0, 1]) {
         this.cUseTexture = null
@@ -226,8 +259,7 @@ class WebGPU {
     
         var passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
         
-        passEncoder.setPipeline(this.pipeline)
-        this.cPipeline = this.pipeline
+        this.cPipeline = null
 
         for (let mesh of this.meshes) {
             mesh.render(passEncoder)
@@ -275,7 +307,7 @@ class WebGPU {
 
                 if (webgpu.ready) {
                     for (let mesh of this.connected) {
-                        mesh.createBindGroup(webgpu.bindGroupLayout, [webgpu.samplers[mesh.sampler], this.texture.createView()])
+                        mesh.createBindGroup(webgpu.shaders[mesh.shaderName].bindGroupLayout, [webgpu.samplers[mesh.sampler], this.texture.createView()])
                     }
                 }
             }
@@ -288,6 +320,7 @@ class WebGPU {
             texture = null
             useTexture = false
             sampler = 0
+            customBuffers = []
             constructor(x, y, z, width, height, depth, vertices=[], faces=[], colours=[]) {
                 this.pos = {x: x, y: y, z: z}
                 this.size = {x: width, y: height, z: depth}
@@ -296,13 +329,25 @@ class WebGPU {
                 this.colours = colours
                 this.faces = faces
                 this.uvs = []
-                this.shaders = webgpu.shaders
-                this.uniforms = webgpu.uniforms
+                this.shaderName = webgpu.dShaderName
+                this.shaders = webgpu.dShaders
+                this.uniforms = webgpu.dUniforms
+                this.vertexConfig = webgpu.vertexConfig
+                this.fragmentConfig = webgpu.fragmentConfig
                 webgpu.meshes.push(this)
                 if (webgpu.ready) {
-                    this.createBindGroup(webgpu.bindGroupLayout, [webgpu.samplers[0], webgpu.dTexture])
+                    webgpu.createShader(this.shaderName, this.shaders, this.uniforms, this.vertexConfig, this.fragmentConfig)
+                    this.createBindGroup(webgpu.shaders[this.shaderName].bindGroupLayout, [webgpu.samplers[0], webgpu.dTexture])
                     this.updateBuffers()
                 }
+            }
+            setShader(shaderName, shaders, uniforms, vertexConfig, fragmentConfig) {
+                this.shaderName = shaderName
+                this.shaders = shaders
+                this.uniforms = uniforms
+                this.vertexConfig = vertexConfig
+                this.fragmentConfig = fragmentConfig
+                if (webgpu.ready) webgpu.createShader(shaderName, shaders, uniforms, vertexConfig, fragmentConfig)
             }
             setTexture(texture) {
                 this.texture = texture
@@ -310,7 +355,7 @@ class WebGPU {
                 texture.connected.push(this)
                 if (texture.loaded) {
                     if (webgpu.ready) {
-                        this.createBindGroup(webgpu.bindGroupLayout, [webgpu.samplers[this.sampler], this.texture.texture.createView()])
+                        this.createBindGroup(webgpu.shaders[this.shaderName].bindgroupLayout, [webgpu.samplers[this.sampler], this.texture.texture.createView()])
                     }
                 }
             }
@@ -322,28 +367,30 @@ class WebGPU {
             }
             createBindGroup(layout, customValues=[]) {
                 let bLayout = {layout: layout, entries: []}
+
+                let uniforms = webgpu.shaders[this.shaderName].uniforms
                 
-                for (let name in webgpu.uniforms) {
-                    if (!webgpu.uniforms[name][4] && !webgpu.uniforms[name][5]) {
+                for (let name in uniforms) {
+                    if (!uniforms[name][4] && !uniforms[name][5]) {
                         this.uniformsB[name] = device.createBuffer({
-                            size: webgpu.uniforms[name][2],
+                            size: uniforms[name][2],
                             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
                         })
                     }
                 }
 
                 let i = 0
-                for (let name in this.uniforms) {
-                    if (!webgpu.uniforms[name][5]) {
+                for (let name in uniforms) {
+                    if (!uniforms[name][5]) {
                         bLayout.entries.push({
-                            binding: this.uniforms[name][1],
+                            binding: uniforms[name][1],
                             resource: {
-                                buffer: this.uniforms[name][4] ? this.uniforms[name][0] : this.uniformsB[name]
+                                buffer: uniforms[name][4] ? uniforms[name][0] : this.uniformsB[name]
                             }
                         })
                     } else {
                         bLayout.entries.push({
-                            binding: this.uniforms[name][1],
+                            binding: uniforms[name][1],
                             resource: customValues[i] ? customValues[i] : null
                         })
                         i++
@@ -355,11 +402,17 @@ class WebGPU {
                 if (!window.device) return
                 let vertexes = []
                 for (let i = 0; i < this.vertices.length/3; i++) {
-                    vertexes.push(
+                    let vertex = [
                         this.vertices[i*3], this.vertices[i*3+1], this.vertices[i*3+2], 
                         this.colours[i*4], this.colours[i*4+1], this.colours[i*4+2], this.colours[i*4+3],
-                        this.uvs[i*2], this.uvs[i*2+1]
-                    )
+                        this.uvs[i*2] ? this.uvs[i*2] : 0, this.uvs[i*2+1] ? this.uvs[i*2+1] : 0
+                    ]
+                    for (let buffer of this.customBuffers) {
+                        for (let i2 = 0; i2 < buffer[0]; i2++) {
+                            vertex.push(buffer[1][i*buffer[0]+i2])
+                        }
+                    }
+                    vertexes.push(...vertex)
                 }
                 vertexes = new Float32Array(vertexes)
                 let indexes = new Uint32Array(this.faces)
@@ -377,20 +430,26 @@ class WebGPU {
                 device.queue.writeBuffer(this.indexBuffer, 0, indexes, 0, indexes.length)
             }
             render(passEncoder) {
+                if (this.faces.length <= 0) return
                 if (this.texture != null) {
                     if (!this.texture.loaded) return
                 }
-                let pipeline = this.oneSide ? webgpu.cullPipeline : webgpu.pipeline
-                if (webgpu.cPipeline != pipeline) {
-                    passEncoder.setPipeline(pipeline)
-                    webgpu.cPipeline = pipeline
-                }
+                webgpu.setShader(passEncoder, this.shaderName, this.oneSide)
 
                 passEncoder.setVertexBuffer(0, this.vertexBuffer)
                 passEncoder.setIndexBuffer(this.indexBuffer, "uint32")
                 
                 let modelMatrix = getModelMatrix(this.pos.x, this.pos.y, this.pos.z, this.rot.x, this.rot.y, this.rot.z)
 
+                // if (webgpu.justChanged) {
+                //     // console.log(this.shaderName, webgpu.setGlobals)
+                //     for (let name in webgpu.setGlobals) {
+                //         device.queue.writeBuffer(webgpu.shaders[this.shaderName].uniforms[name][0], 0, webgpu.setGlobals[name], 0, webgpu.setGlobals[name].length)
+                //     }
+                //     webgpu.justChanged = false
+                // }
+
+                // device.queue.writeBuffer(webgpu.shaders[this.shaderName].uniforms["view"][0], 0, viewProjection, 0, viewProjection.length)
                 device.queue.writeBuffer(this.uniformsB.model, 0, modelMatrix, 0, modelMatrix.length)
 
                 if (this.useTexture != webgpu.cUseTexture) {
