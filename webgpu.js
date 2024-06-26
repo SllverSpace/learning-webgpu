@@ -32,7 +32,7 @@ class WebGPU {
         {
             var color = fragData.color;
             if (useTexture != 0u) {
-                color = textureSample(uTexture, uSampler, fragData.uv);
+                color = textureSample(uTexture, uSampler, fragData.uv) * fragData.color;
             }
             return color;
         }

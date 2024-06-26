@@ -80,7 +80,7 @@ var test2 = new webgpu.Mesh(-3, 0, 0, 1, 1, 1, [
     0, 0, 1, 1
 ])
 
-var coolBox = new webgpu.Box(0, 0, -3, 1, 1, 1, [0, 0.5, 1])
+var coolBox = new webgpu.Box(0, 0, -3, 1, 1, 1, [1, 1, 1])
 coolBox.setTexture(coolCube)
 coolBox.setUvs()
 
@@ -100,9 +100,13 @@ var ground = new webgpu.Mesh(0, -0.5, 0, 1, 1, 1, [
 ])
 ground.oneSide = true
 
-var ttest1 = new webgpu.Box(-2, 1, 4, 1, 1, 1, [1, 0, 0, 1])
+var ttest1 = new webgpu.Box(-2, 1, 4, 1, 1, 1, [1, 1, 1, 1])
 var ttest2 = new webgpu.Box(0, 1, 4, 1, 1, 1, [0, 1, 0, 1])
 var ttest3 = new webgpu.Box(2, 1, 4, 1, 1, 1, [0, 0, 1, 1])
+
+ttest1.oneSide = false
+ttest2.oneSide = false
+ttest3.oneSide = false
 
 ttest1.setTexture(edges)
 ttest1.setUvs()
