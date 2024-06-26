@@ -124,7 +124,7 @@ var su = 0
 
 var time = 0
 
-var speed = 0.3
+var speed = 30
 
 var viewProjection
 
@@ -167,9 +167,9 @@ function frame(timestamp) {
     vel.y = lerp(vel.y, 0, delta*100*0.1)
     vel.z = lerp(vel.z, 0, delta*100*0.1)
 
-    camera.pos.x += vel.x
-    camera.pos.y += vel.y
-    camera.pos.z += vel.z
+    camera.pos.x += vel.x*delta
+    camera.pos.y += vel.y*delta
+    camera.pos.z += vel.z*delta
 
     if (mouse.lclick) {
         input.lockMouse()
