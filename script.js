@@ -53,7 +53,7 @@ var grassIds = []
 for (let x = 0; x < gridSize; x++) {
     for (let z = 0; z < gridSize; z++) {
         grass.vertices.push(
-            x*grassSize, 5*grassSize, z*grassSize,
+            x*grassSize, 7.5*grassSize, z*grassSize,
             0*grassSize + x*grassSize, 0, z*grassSize,
             0*grassSize + x*grassSize, 0, z*grassSize
         )
@@ -128,7 +128,15 @@ var speed = 30
 
 var viewProjection
 
+var cpuTimes = []
+var gpuTimes = []
+
+var fps = 0
+var fps2 = 0
+
 function frame(timestamp) {
+    let start = performance.now()
+    fps++
 
     utils.getDelta(timestamp)
     ui.resizeCanvas()
@@ -190,10 +198,32 @@ function frame(timestamp) {
 
     webgpu.render([0.4, 0.8, 1, 1])
 
+    cpuTimes.push(performance.now()-start)
+    if (cpuTimes.length > 100) cpuTimes.splice(0, 1)
+
+    let cpuAvg = 0
+    for (let time of cpuTimes) {
+        cpuAvg += time
+    }
+    cpuAvg /= cpuTimes.length
+
+    let gpuAvg = 0
+    for (let time of webgpu.gpuTimes) {
+        gpuAvg += time
+    }
+    gpuAvg /= webgpu.gpuTimes.length
+
+    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2}`)
+
     input.updateInput()
 
     requestAnimationFrame(frame)
 }
+
+setInterval(() => {
+    fps2 = fps
+    fps = 0
+}, 1000)
 
 var sensitivity = 0.002
 

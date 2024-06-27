@@ -82,6 +82,7 @@ class WebGPU {
     textures = []
     cUseTexture = null 
     ready = false
+    gpuTimes = []
     async setup(id="gpucanvas") {
         window.gpucanvas = document.getElementById(id)
         
@@ -232,8 +233,9 @@ class WebGPU {
             device.queue.writeBuffer(webgpu.shaders[shader].uniforms[name][0], 0, buffer, 0, buffer.length)
         }
     }
-    render(background=[0, 0, 0, 1]) {
+    async render(background=[0, 0, 0, 1]) {
         this.cUseTexture = null
+
         var commandEncoder = device.createCommandEncoder()
 
         var depthTexture = device.createTexture({
@@ -266,8 +268,13 @@ class WebGPU {
         }
 
         passEncoder.end()
-  
+        
+        let start = performance.now()
         device.queue.submit([commandEncoder.finish()])
+        await device.queue.onSubmittedWorkDone()
+
+        this.gpuTimes.push(performance.now() - start)
+        if (this.gpuTimes.length > 100) this.gpuTimes.splice(0, 1)
     }
     get Texture() {
         return class {

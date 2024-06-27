@@ -53,7 +53,7 @@ var grassShaders = `
         if (top) {
             pos.x += (off.x) * (factor*3);
             pos.z += (off.y) * (factor*3);
-            pos.y -= factor/2 * size * 10;
+            pos.y -= factor/2 * size * 7.5 * 2;
         } else {
             pos.x += off.x;
             pos.z += off.y;
