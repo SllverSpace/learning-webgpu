@@ -39,6 +39,9 @@ var grassShaders = `
 
         var off : vec2<f32> = vec2(0, 0);
 
+        pos.x += (hash(u32(id2))*2-1) / 5;
+        pos.z += (hash(u32(id2 + 94823))*2-1) / 5;
+
         off.x += (hash(vertexIndex)*2-1) * size*1.5;
         off.y += (hash(vertexIndex+493045)*2-1) * size*1.5;
         
@@ -47,7 +50,9 @@ var grassShaders = `
             pos.z += sin(time + 58294 + (y/gridSize)*20) * size;
         }
 
-        var d = sqrt(pow((camera.x-pos.x+10), 2) + pow((camera.y-pos.y+1) / 2, 2) + pow((camera.z-pos.z+10), 2))/1.5;
+        var moved : f32 = 10;
+
+        var d = sqrt(pow((camera.x-pos.x+moved), 2) + pow((camera.y-pos.y+1) / 2, 2) + pow((camera.z-pos.z+moved), 2))/1.5;
         var factor = 1.0-min(1, max(0, d));
 
         if (top) {

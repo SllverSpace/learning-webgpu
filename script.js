@@ -21,7 +21,7 @@ function getViewMatrix() {
     return [projection, view]
 }
 
-function getModelMatrix(x, y, z, rotx, roty, rotz) {
+function getModelMatrix(x, y, z, rotx, roty, rotz, scalex, scaley, scalez) {
     let model = mat4.create()
 
     mat4.translate(model, model, [x, y, -z])
@@ -29,7 +29,7 @@ function getModelMatrix(x, y, z, rotx, roty, rotz) {
     mat4.rotateX(model, model, -rotx)
     mat4.rotateZ(model, model, -rotz)
 
-    mat4.scale(model, model, [1, 1, -1])
+    mat4.scale(model, model, [scalex, scaley, -scalez])
 
     // mat4.invert(model, model)
 
@@ -71,7 +71,7 @@ for (let x = 0; x < gridSize; x++) {
     }
 }
 grass.customBuffers = [[1, grassIds]]
-grass.setShader("grass", grassShaders, grassUniforms, grassVertexConfig, grass.fragmentConfig)
+grass.setShader("grass", grassShaders, grassUniforms, grassVertexConfig, grass.fragmentConfig, grass.pipelineConfig)
 grass.updateBuffers()
 
 
@@ -87,7 +87,7 @@ var test2 = new webgpu.Mesh(-3, 0, 0, 1, 1, 1, [
     0, 0, 1, 1
 ])
 
-var coolBox = new webgpu.Box(0, 0, -3, 1, 1, 1, [1, 1, 1])
+var coolBox = new webgpu.Box(0, 0, -3, 1, 1, 1, [1, 1, 1, 1])
 coolBox.setTexture(coolCube)
 coolBox.setUvs()
 
@@ -107,9 +107,12 @@ var ground = new webgpu.Mesh(0, -0.5, 0, 1, 1, 1, [
 ])
 ground.oneSide = true
 
-var ttest1 = new webgpu.Box(-2, 1, 4, 1, 1, 1, [1, 1, 1, 1])
-var ttest2 = new webgpu.Box(0, 1, 4, 1, 1, 1, [0, 1, 0, 1])
-var ttest3 = new webgpu.Box(2, 1, 4, 1, 1, 1, [0, 0, 1, 1])
+var ttest1 = new webgpu.Box(-2, 1, 4, 1, 1, 1, [1, 1, 1, 0.5])
+var ttest2 = new webgpu.Box(0, 1, 4, 1, 1, 1, [0, 1, 0, 0.5])
+var ttest3 = new webgpu.Box(2, 1, 4, 1, 1, 1, [0, 0, 1, 0.5])
+ttest1.transparent = true
+ttest2.transparent = true
+ttest3.transparent = true
 
 ttest1.oneSide = false
 ttest2.oneSide = false
@@ -117,6 +120,36 @@ ttest3.oneSide = false
 
 ttest1.setTexture(edges)
 ttest1.setUvs()
+
+var houseAlpha = 0.5
+
+var house = [
+    new webgpu.Box(7.5, 0.5, 0, 5, 0.1, 5, [0.6, 0.5, 0, houseAlpha]),
+    new webgpu.Box(5+0.15, 0, -2.35, 0.2, 1, 0.2, [0.5, 0.4, 0, houseAlpha]),
+    new webgpu.Box(10-0.15, 0, -2.35, 0.2, 1, 0.2, [0.5, 0.4, 0, houseAlpha]),
+    new webgpu.Box(5+0.15, 0, 2.35, 0.2, 1, 0.2, [0.5, 0.4, 0, houseAlpha]),
+    new webgpu.Box(10-0.15, 0, 2.35, 0.2, 1, 0.2, [0.5, 0.4, 0, houseAlpha]),
+
+    new webgpu.Box(10, 2, 0, 0.1, 3, 5, [0.6, 0.5, 0, houseAlpha]),
+    new webgpu.Box(7.5, 2, 2.5, 5, 3, 0.1, [0.6, 0.5, 0, houseAlpha]),
+    new webgpu.Box(7.5, 2, -2.5, 5, 3, 0.1, [0.6, 0.5, 0, houseAlpha]),
+    new webgpu.Box(5, 2, -1.5, 0.1, 3, 2, [0.6, 0.5, 0, houseAlpha]),
+    new webgpu.Box(5, 2, 1.5, 0.1, 3, 2, [0.6, 0.5, 0, houseAlpha]),
+    new webgpu.Box(5, 3, 0, 0.1, 1, 1, [0.6, 0.5, 0, houseAlpha]),
+    new webgpu.Box(7.5, 3.5, 0, 5, 0.1, 5, [0.6, 0.5, 0, houseAlpha]),
+
+    new webgpu.Box(4.5, 0, 0, 1, 0.1, 1.5, [0.6, 0.5, 0, houseAlpha]),
+]
+
+if (houseAlpha < 1) {
+    for (let mesh of house) {
+        mesh.transparent = true
+        mesh.oneSide = false
+    }
+}
+
+house[12].rot.y = Math.PI/2
+house[12].rot.x = -Math.PI/4
 
 var delta = 0
 var lastTime = 0
