@@ -86,12 +86,38 @@ class WebGPU {
         ]
     }
     tShaders = `
+        struct SliceInfo {
+            sliceStartY: i32
+        };
+
+        struct Heads {
+            numFragments: atomic<u32>,
+            data: array<atomic<u32>>
+        };
+
+        struct LinkedListElement {
+            color: vec4f,
+            depth: f32,
+            next: u32
+        };
+
+        struct LinkedList {
+            data: array<LinkedListElement>
+        };
+
         @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
         @group(0) @binding(1) var<uniform> uProjection: mat4x4<f32>;
         @group(0) @binding(2) var<uniform> uModel: mat4x4<f32>;
         @group(0) @binding(3) var uSampler: sampler;
         @group(0) @binding(4) var uTexture: texture_2d<f32>;
         @group(0) @binding(5) var<uniform> useTexture: u32;
+        @group(0) @binding(6) var<uniform> maxStorableFragments: u32;
+        @group(0) @binding(7) var<uniform> targetWidth: u32;
+       
+        @binding(8) @group(0) var<storage, read_write> heads: Heads;
+        @binding(9) @group(0) var<storage, read_write> linkedList: LinkedList;
+        @binding(10) @group(0) var solidDepthTexture: texture_depth_2d;
+        @binding(11) @group(0) var<uniform> sliceInfo: SliceInfo;
 
         struct VertexOut {
         @builtin(position) position : vec4f,
@@ -110,26 +136,34 @@ class WebGPU {
             return output;
         }
 
-        struct FragmentOutput {
-            @location(0) accumulationColor : vec4<f32>,
-            @location(1) revealage : f32
-        }
+        
 
         @fragment
-        fn fragment_main(fragData: VertexOut) -> FragmentOutput {
+        fn fragment_main(fragData: VertexOut)
+        {
+            let fragCoord = fragData.position;
+            let fragCoords = vec2i(fragCoord.xy);
+            let solidDepth = textureLoad(solidDepthTexture, fragCoords, 0);
+
+            if fragCoord.z >= solidDepth {
+                discard;
+            }
+
+            let headsIndex = u32(fragCoords.y - sliceInfo.sliceStartY) * targetWidth + u32(fragCoords.x);
+
+            var fragIndex = atomicAdd(&heads.numFragments, 1u) % maxStorableFragments;
+
             var color = fragData.color;
             if useTexture != 0u {
                 color = textureSample(uTexture, uSampler, fragData.uv) * fragData.color;
             }
 
-            var fragCoord = fragData.position;
-
-            let depth = fragCoord.z / fragCoord.w;
-            let weight = color.a * clamp(5 / (1e-5 + pow(fragCoord.z / fragCoord.w, 4.0)), 1e-2, 3e3);
-            var output : FragmentOutput;
-            output.accumulationColor = vec4<f32>(color.rgb * color.a, color.a) * weight;
-            output.revealage = color.a;
-            return output;
+            if fragIndex < maxStorableFragments {
+                let lastHead = atomicExchange(&heads.data[headsIndex], fragIndex);
+                linkedList.data[fragIndex].depth = fragCoord.z;
+                linkedList.data[fragIndex].next = lastHead;
+                linkedList.data[fragIndex].color = color;
+            }
         }
     `
     tShaderName = "translucent"
@@ -140,78 +174,112 @@ class WebGPU {
         sampler: [null, 3, 0, 1, false, true, {sampler: {type: "non-filtering"}}],
         texture: [null, 4, 0, 1, false, true, {texture: {sampleType: "float"}}],
         useTexture: [null, 5, 4, 1, false],
+        maxStorableFragments: [null, 6, 4, 1, true],
+        targetWidth: [null, 7, 4, 1, true],
+        heads: [null, 8, 0, 1, true, false, {buffer: {type: "storage"}}],
+        linkedList: [null, 9, 0, 1, true, false, {buffer: {type: "storage"}}],
+        solidDepthTexture: [null, 10, 0, 1, true, true, {texture: {sampleType: "depth"}}],
+        sliceInfo: [null, 11, 0, 1, true, true, {buffer: {type: "uniform", hasDynamicOffset: true}}],
     }
     tFragmentConfig = {
         entryPoint: "fragment_main",
         targets: [
             {
-                format: "rgba16float",
-                blend: {
-                    color: { operation: "add", srcFactor: "one", dstFactor: "one" },
-                    alpha: { operation: "add", srcFactor: "one", dstFactor: "one" }
-                }
-            },
-            {
-                format: "r8unorm",
-                blend: {
-                    color: { operation: "add", srcFactor: "zero", dstFactor: "one-minus-src" },
-                    alpha: { operation: "add", srcFactor: "zero", dstFactor: "one-minus-src" }
-                }
+                format: "bgra8unorm",
+                writeMask: 0x0,
             }
         ]
     }
-    tPipelineConfig = {
-        depthStencil: {
-            depthWriteEnabled: false,
-            depthCompare: "less",
-            format: "depth24plus",
-        }
-    }
     cShaders = `
-        struct VertexOutput {
-            @builtin(position) position: vec4<f32>,
-            @location(0) texCoord: vec2<f32>,
-        };
+        struct SliceInfo {
+            sliceStartY: i32
+        }
 
-        @binding(0) @group(0) var accumTexture: texture_2d<f32>;
-        @binding(1) @group(0) var revealTexture: texture_2d<f32>;
-        @binding(2) @group(0) var textureSampler: sampler;
+        struct Heads {
+            numFragments: u32,
+            data: array<u32>
+        }
+
+        struct LinkedListElement {
+            color: vec4f,
+            depth: f32,
+            next: u32
+        }
+
+        struct LinkedList {
+            data: array<LinkedListElement>
+        }
+
+        @binding(0) @group(0) var<uniform> targetWidth: u32;
+        @binding(1) @group(0) var<storage, read_write> heads: Heads;
+        @binding(2) @group(0) var<storage, read_write> linkedList: LinkedList;
+        @binding(3) @group(0) var<uniform> sliceInfo: SliceInfo;
 
         @vertex
-        fn vertex_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
-            let vertices = array<vec2<f32>, 6>(
+        fn vertex_main(@builtin(vertex_index) vertIndex: u32) -> @builtin(position) vec4f {
+            const position = array<vec2f, 6>(
                 vec2(-1.0, -1.0),
                 vec2(1.0, -1.0),
-                vec2(-1.0, 1.0),
-
                 vec2(1.0, 1.0),
-                vec2(1.0, -1.0),
-                vec2(-1.0, 1.0)
+                vec2(-1.0, -1.0),
+                vec2(1.0, 1.0),
+                vec2(-1.0, 1.0),
             );
-            var output: VertexOutput;
-            let x = vertices[vertexIndex].x;
-            let y = vertices[vertexIndex].y;
-            output.position = vec4<f32>(x, y, 0.0, 1.0);
-            output.texCoord = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
-            return output;
+            
+            return vec4(position[vertIndex], 0.0, 1.0);
         }
         
         @fragment
-        fn fragment_main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
-            let accum = textureSample(accumTexture, textureSampler, texCoord);
-            let reveal = textureSample(revealTexture, textureSampler, texCoord).r;
+        fn fragment_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
+            let fragCoords = vec2i(position.xy);
+            let headsIndex = u32(fragCoords.y - sliceInfo.sliceStartY) * targetWidth + u32(fragCoords.x);
 
-            let epsilon = 0.00001;
-            let averageColour = accum.rgb / max(accum.a, epsilon);
-            let alpha = 1.0 - reveal;
+            const maxLayers = 12u;
 
-            return vec4<f32>(averageColour * alpha, alpha);
+            var layers: array<LinkedListElement, maxLayers>;
+
+            var numLayers = 0u;
+            var elementIndex = heads.data[headsIndex];
+
+            while elementIndex != 0xFFFFFFFFu && numLayers < maxLayers {
+                layers[numLayers] = linkedList.data[elementIndex];
+                numLayers++;
+                elementIndex = linkedList.data[elementIndex].next;
+            }
+            
+            if numLayers == 0u {
+                discard;
+            }
+
+            for (var i = 1u; i < numLayers; i++) {
+                let toInsert = layers[i];
+                var j = i;
+
+                while j > 0u && toInsert.depth > layers[j - 1u].depth {
+                    layers[j] = layers[j - 1u];
+                    j--;
+                }
+
+                layers[j] = toInsert;
+            }
+
+            var colour = vec4(0.0, 0.0, 0.0, 1.0);
+
+            for (var i = 0u; i < numLayers; i++) {
+                colour = vec4(mix(colour.rgb, layers[i].color.rgb, layers[i].color.a), colour.a);
+                colour.a *= 1.0 - layers[i].color.a;
+            }
+            colour.a = (1.0 - colour.a);
+            colour = vec4(colour.rgb / colour.a, colour.a);
+            
+            return colour;
         }
     `
     cUniforms = {
-        accumTexture: [null, 0, 0, 1, false, true, {texture: {sampleType: "float"}}],
-        revealTexture: [null, 1, 0, 1, false, true, {texture: {sampleType: "float"}}],
-        sampler: [null, 2, 0, 1, false, true, {sampler: {type: "non-filtering"}}],
+        targetWidth: [null, 0, 4, 1, true],
+        heads: [null, 1, 0, 1, true, false, {buffer: {type: "storage"}}],
+        linkedList: [null, 2, 0, 1, true, false, {buffer: {type: "storage"}}],
+        sliceInfo: [null, 3, 0, 1, true, true, {buffer: {type: "uniform", hasDynamicOffset: true}}]
     }
     cFragmentConfig = {
         targets: [
@@ -296,13 +364,13 @@ class WebGPU {
             mesh.updateBuffers()
         }
 
-        this.createShader("translucent", this.tShaders, this.tUniforms, this.vertexConfig, this.tFragmentConfig, this.tPipelineConfig)
+        this.createShader("translucent", this.tShaders, this.tUniforms, this.vertexConfig, this.tFragmentConfig, {})
         this.createShader("composite", this.cShaders, this.cUniforms, {}, this.cFragmentConfig, {})
 
         this.compositeMesh.renderA = (passEncoder) => {
             passEncoder.setPipeline(this.shaders.composite.pipeline)
 
-            passEncoder.setBindGroup(0, this.compositeMesh.bindGroup)
+            passEncoder.setBindGroup(0, this.compositeMesh.bindGroup, this.compositeMesh.bindGroupInfo)
 
             passEncoder.draw(6)
         }
@@ -457,59 +525,74 @@ class WebGPU {
 
         solidEncoder.end()
 
-        const accumTexture = device.createTexture({
-            size: [gpucanvas.width, gpucanvas.height],
-            format: 'rgba16float',
-            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
-        });
-          
-        const revealTexture = device.createTexture({
-            size: [gpucanvas.width, gpucanvas.height],
-            format: 'r8unorm',
-            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
-        });
+        if (cresized) {
+            var averageLayersPerFragment = 4
+            var linkedListElementSize = 5 * Float32Array.BYTES_PER_ELEMENT + 1 * Uint32Array.BYTES_PER_ELEMENT
+            
+            var bytesPerLine = gpucanvas.width * averageLayersPerFragment * linkedListElementSize
+            var maxLinesSupported = Math.floor(device.limits.maxStorageBufferBindingSize / bytesPerLine)
 
-        var accumView = accumTexture.createView()
-        var revealView = revealTexture.createView()
+            this.numSlices = Math.ceil(gpucanvas.height / maxLinesSupported)
+            this.sliceHeight = Math.ceil(gpucanvas.height / this.numSlices)
+            var linkedListBufferSize = this.sliceHeight * bytesPerLine
 
-        var transparentEncoder = commandEncoder.beginRenderPass({
-            colorAttachments: [
-                {
-                    view: accumView,
-                    clearValue: {r: 0, g: 0, b: 0, a: 0},
-                    loadOp: "clear",
-                    storeOp: "store"
-                },
-                {
-                    view: revealView,
-                    clearValue: {r: 1, g: 0, b: 0, a: 0},
-                    loadOp: "clear",
-                    storeOp: "store"
-                }
-            ],
-            depthStencilAttachment: {
-                view: depthTextureView, 
-                depthLoadOp: "load",
-                depthStoreOp: "store"
+            this.linkedListBuffer = device.createBuffer({
+                size: linkedListBufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            })
+
+            this.sliceInfoBuffer = device.createBuffer({
+                size: this.numSlices * device.limits.minUniformBufferOffsetAlignment,
+                usage: GPUBufferUsage.UNIFORM,
+                mappedAtCreation: true
+            })
+
+            var mapping = new Int32Array(this.sliceInfoBuffer.getMappedRange())
+            var stride = device.limits.minUniformBufferOffsetAlignment / Int32Array.BYTES_PER_ELEMENT
+            for (let i = 0; i < this.numSlices; i++) {
+                mapping[i * stride] = i * this.sliceHeight
             }
-        })
+            this.sliceInfoBuffer.unmap()
+
+            this.headsBuffer = device.createBuffer({
+                size: (1 + gpucanvas.width * this.sliceHeight) * Uint32Array.BYTES_PER_ELEMENT,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            })
+
+            this.headsInitBuffer = device.createBuffer({
+                size: (1 + gpucanvas.width * this.sliceHeight) * Uint32Array.BYTES_PER_ELEMENT,
+                usage: GPUBufferUsage.COPY_SRC,
+                mappedAtCreation: true
+            })
+            var buffer = new Uint32Array(this.headsInitBuffer.getMappedRange())
+
+            for (let i = 0; i < buffer.length; i++) {
+                buffer[i] = 0xffffffff
+            }
+
+            this.headsInitBuffer.unmap()
+
+            this.shaders.translucent.uniforms.heads[0] = this.headsBuffer
+            this.shaders.translucent.uniforms.linkedList[0] = this.linkedListBuffer
+
+            this.shaders.composite.uniforms.heads[0] = this.headsBuffer
+            this.shaders.composite.uniforms.linkedList[0] = this.linkedListBuffer
+
+            this.setGlobalUniform("targetWidth", new Uint32Array([gpucanvas.width]))
+            let msfBuffer = new Uint32Array([averageLayersPerFragment * gpucanvas.width * this.sliceHeight])
+            device.queue.writeBuffer(webgpu.shaders.translucent.uniforms.maxStorableFragments[0], 0, msfBuffer, 0, msfBuffer.length)
+        }
 
         for (let mesh of transparent) {
-            if (mesh.shaderName != "translucent" || (mesh.texture && !mesh.texture.loaded)) {
-                if (mesh.texture && !mesh.texture.loaded) continue
-                mesh.setShader("translucent", this.tShaders, this.tUniforms, this.tFragmentConfig, this.vertexConfig, this.tPipelineConfig)
-                if (mesh.texture) {
-                    mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[mesh.sampler], mesh.texture.texture.createView()])
-                } else {
-                    mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[0], this.dTexture.createView()])
-                }
+            mesh.setShader("translucent", this.tShaders, this.tUniforms, this.vertexConfig, this.tFragmentConfig, {})
+            if (mesh.texture && mesh.texture.loaded) {
+                mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[mesh.sampler], mesh.texture ? mesh.texture.texture.createView() : this.dTexture, depthTextureView, {buffer: this.sliceInfoBuffer, size: device.limits.minUniformBufferOffsetAlignment}])
+            } else {
+                mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[0], this.dTexture.createView(), depthTextureView, {buffer: this.sliceInfoBuffer, size: device.limits.minUniformBufferOffsetAlignment}])
             }
-            mesh.render(transparentEncoder)
         }
-            
-        transparentEncoder.end()
 
-        var compositeEncoder = commandEncoder.beginRenderPass({
+        let compositePassDescriptor = {
             colorAttachments: [
                 {
                     view: textureView,
@@ -517,14 +600,64 @@ class WebGPU {
                     storeOp: "store"
                 }
             ]
-        })
+        }
 
-        this.compositeMesh.setShader("composite", this.cShaders, this.cUniforms, this.vertexConfig, this.cFragmentConfig, {})
-        this.compositeMesh.createBindGroup(this.shaders.composite.bindGroupLayout, [accumView, revealView, this.samplers[0]])
+        for (let slice = 0; slice < this.numSlices; slice++) {
+            this.cPipeline = null
+            commandEncoder.copyBufferToBuffer(
+                this.headsInitBuffer,
+                0,
+                this.headsBuffer,
+                0,
+                this.headsInitBuffer.size
+            )
 
-        this.compositeMesh.render(compositeEncoder)
+            let scissorX = 0
+            let scissorY = slice * this.sliceHeight
+            let scissorWidth = gpucanvas.width
+            let scissorHeight = Math.min((slice + 1) * this.sliceHeight, gpucanvas.height) - slice * this.sliceHeight
 
-        compositeEncoder.end()
+            let translucentPassDescriptor = {
+                colorAttachments: [
+                    {
+                        loadOp: "load",
+                        storeOp: "store",
+                        view: textureView
+                    }
+                ]
+            }
+            let translucentPassEncoder = commandEncoder.beginRenderPass(translucentPassDescriptor)
+
+            translucentPassEncoder.setScissorRect(
+                scissorX,
+                scissorY,
+                scissorWidth,
+                scissorHeight
+            )
+
+            for (let mesh of transparent) {
+                mesh.bindGroupInfo = [slice * device.limits.minUniformBufferOffsetAlignment]
+                mesh.render(translucentPassEncoder)
+            }
+
+            translucentPassEncoder.end()
+
+            let compositePassEncoder = commandEncoder.beginRenderPass(compositePassDescriptor)
+
+            compositePassEncoder.setScissorRect(
+                scissorX,
+                scissorY,
+                scissorWidth,
+                scissorHeight
+            )
+            
+            this.compositeMesh.setShader("composite", this.cShaders, this.cUniforms, {}, this.cFragmentConfig, {})
+            this.compositeMesh.createBindGroup(this.shaders.composite.bindGroupLayout, [{buffer: this.sliceInfoBuffer, size: device.limits.minUniformBufferOffsetAlignment}])
+            this.compositeMesh.bindGroupInfo = [slice * device.limits.minUniformBufferOffsetAlignment]
+            this.compositeMesh.render(compositePassEncoder)
+
+            compositePassEncoder.end()
+        }
         
         let start = performance.now()
         device.queue.submit([commandEncoder.finish()])

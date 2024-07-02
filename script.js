@@ -107,7 +107,7 @@ var ground = new webgpu.Mesh(0, -0.5, 0, 1, 1, 1, [
 ])
 ground.oneSide = true
 
-var ttest1 = new webgpu.Box(-2, 1, 4, 1, 1, 1, [1, 1, 1, 1])
+var ttest1 = new webgpu.Box(-2, 1, 4, 1, 1, 1, [1, 1, 1, 0.5])
 var ttest2 = new webgpu.Box(0, 1, 4, 1, 1, 1, [0, 1, 0, 0.5])
 var ttest3 = new webgpu.Box(2, 1, 4, 1, 1, 1, [0, 0, 1, 0.5])
 ttest1.transparent = true
