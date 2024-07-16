@@ -115,7 +115,7 @@ ttest2.transparent = true
 ttest3.transparent = true
 
 ttest1.oneSide = false
-ttest2.oneSide = false
+// ttest2.oneSide = false
 ttest3.oneSide = false
 
 ttest1.setTexture(edges)
@@ -140,6 +140,27 @@ var house = [
 
     new webgpu.Box(4.5, 0, 0, 1, 0.1, 1.5, [0.6, 0.5, 0, houseAlpha]),
 ]
+
+var line = new webgpu.Mesh(-10, 1, -7.5, 1, 1, 1, [], [], [])
+for (let i = 0; i < 20; i++) {
+    line.vertices.push(
+        i, 0, 0,
+        i, 0, 1,
+        i, 1, 0,
+        i, 1, 1
+    )
+    line.faces.push(
+        i*4, i*4+1, i*4+3,
+        i*4, i*4+2, i*4+3
+    )
+    let c = hslToRgb((i / 20) * 360, 100, 50, 0.5)
+    c[0] /= 255; c[1] /= 255; c[2] /= 255
+    line.colours.push(
+        ...c, ...c, ...c, ...c
+    )
+}
+line.transparent = true
+line.updateBuffers()
 
 if (houseAlpha < 1) {
     for (let mesh of house) {
