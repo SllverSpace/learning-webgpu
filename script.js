@@ -199,8 +199,7 @@ function frame(timestamp) {
 
     time += delta
 
-    gpucanvas.width = window.innerWidth
-    gpucanvas.height = window.innerHeight
+    webgpu.resizeCanvas()
 
     if (keys["KeyW"]) {
         vel.x += Math.sin(camera.rot.y)*speed*delta
