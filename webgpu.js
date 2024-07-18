@@ -4,7 +4,6 @@ class WebGPU {
     debugShaders = `
 
         @group(0) @binding(0) var uTexture: texture_2d<f32>;
-        @group(0) @binding(1) var<storage, read> uStorage: array<u32>;
 
         struct VertexOut {
             @builtin(position) position : vec4f,
@@ -32,19 +31,13 @@ class WebGPU {
             let fragCoord = fragData.position;
             let fragCoords = vec2i(fragCoord.xy);
 
-            let index = u32(fragCoords.x) * textureDimensions(uTexture).y + u32(fragCoords.y);
-            let value1 = (1 - bitcast<f32>(uStorage[index * 2])) * 100 - 99;
-            let value2 = bitcast<f32>(uStorage[index * 2 + 1]) * 100 - 99;
-
             let colour = textureLoad(uTexture, fragCoords, 0);
 
-            return vec4f(colour.r, colour.g, colour.b, 1.0);
-            // return vec4f(value1, value2, 0, 1);
+            return colour;
         }
     `
     debugUniforms = {
         texture: [null, 0, 0, 1, false, true, {texture: {sampleType: "float"}}],
-        storage: [null, 1, 0, 1, true, false, {buffer: {type: "read-only-storage"}}],
     }
     dShaders = `
         @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
@@ -160,8 +153,8 @@ class WebGPU {
         }
 
         struct FragmentOutput {
-            @location(0) frontColour: vec4f,
-            @location(1) backColour: vec4f
+            @location(0) depth: f32, 
+            @location(1) colour: vec4f
         }
 
         @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
@@ -173,8 +166,8 @@ class WebGPU {
        
         @binding(6) @group(0) var solidDepthTexture: texture_depth_2d;
 
-        @binding(7) @group(0) var<storage, read> readDepths: array<u32>;
-        @binding(8) @group(0) var<storage, read_write> writeDepths: array<atomic<u32>>;
+        @binding(7) @group(0) var frontDepthTexture: texture_2d<f32>;
+        @binding(8) @group(0) var frontColourTexture: texture_2d<f32>;
 
         struct VertexOut {
         @builtin(position) position : vec4f,
@@ -193,43 +186,23 @@ class WebGPU {
             return output;
         }
 
-        fn decodeDepth(encodedDepth: f32) -> f32 {
-            let near = 0.1;
-            let far = 5000.0;
-            let c = pow(2.0, (1.0 - encodedDepth) * log2(far / near));
-            return (far + near - (2.0 * near) / c) / (far - near);
-        }
-
         @fragment
         fn fragment_main(fragData: VertexOut) -> FragmentOutput
         {
             let fragCoord = fragData.position;
             let fragCoords = vec2i(fragCoord.xy);
 
-            let index = u32(fragCoords.x) * textureDimensions(solidDepthTexture).y + u32(fragCoords.y);
-
-            let fragDepth = fragCoord.z;
-
             let solidDepth = textureLoad(solidDepthTexture, fragCoords, 0);
+            let peelDepth = textureLoad(frontDepthTexture, fragCoords, 0).r;
+            let lastFrontColour = textureLoad(frontColourTexture, fragCoords, 0);
 
-            var output: FragmentOutput;
-
-            var oDepth = vec2f(0);
-
-            // output.depth = vec4f(0, 0, 0, 0);
-
-            output.frontColour = vec4f(0);
-
-            output.backColour = vec4f(0);
-
-            let nearestDepth = 1 - bitcast<f32>(readDepths[index*2]);
-            let furthestDepth = bitcast<f32>(readDepths[index*2+1]);
+            let alphaMultiplier = 1.0 - lastFrontColour.a;
 
             if fragCoord.z >= solidDepth {
                 discard;
             }
 
-            if fragCoord.z <= 0.5 {
+            if fragCoord.z <= peelDepth {
                 discard;
             }
 
@@ -238,54 +211,15 @@ class WebGPU {
                 color = textureSample(uTexture, uSampler, fragData.uv) * fragData.color;
             }
 
-            // output.depth = vec4f(1 - fragDepth, fragDepth, 0, 0);
-            // return output;
-
-            // output.frontColour = vec4f(nearestDepth * 100 - 99, 0, 0, 1);
-
-            if fragDepth < nearestDepth || fragDepth > furthestDepth {
-                return output;
-            }
-
-            // output.frontColour = vec4f(1, 0, 0, 1);
-
-            if fragDepth > nearestDepth && fragDepth < furthestDepth {
-                oDepth = vec2f(1 - fragDepth, fragDepth);
-                atomicMax(&writeDepths[index*2], bitcast<u32>(oDepth.x));
-                atomicMax(&writeDepths[index*2+1], bitcast<u32>(oDepth.y));
-                // output.depth = vec4f(1 - fragDepth, fragDepth, 0, 0);
-                return output;
-            }
-
-            // output.frontColour = vec4f(1, 0, 0, 1);
-
-            // output.frontColour.r = 1.0;
-
-            // output.frontColour.r += color.r * color.a * alphaMultiplier;
-            // output.frontColour.g += color.g * color.a * alphaMultiplier;
-            // output.frontColour.b += color.b * color.a * alphaMultiplier;
-            // output.frontColour.a = 1.0 - alphaMultiplier * (1.0 - color.a);
-
-            
-            
-            if (fragDepth == nearestDepth) {
-                output.frontColour = vec4f(color.rgb * color.a, color.a);
-            } else {
-                output.backColour = vec4f(color.rgb * color.a, color.a);
-            }
-
-            
-            // output.depth = fragCoord.z;
-            // output.frontColour = color;
+            var output: FragmentOutput;
+            output.depth = fragCoord.z;
+            output.colour = color;
 
             // output.colour.r += color.r * color.a * alphaMultiplier;
             // output.colour.g += color.g * color.a * alphaMultiplier;
             // output.colour.b += color.b * color.a * alphaMultiplier;
 
             // output.colour.a = 1.0 - alphaMultiplier * (1.0 - color.a);
-
-            // atomicMax(&writeDepths[index*2], bitcast<u32>(oDepth.x));
-            // atomicMax(&writeDepths[index*2+1], bitcast<u32>(oDepth.y));
 
             return output;
         }
@@ -299,27 +233,19 @@ class WebGPU {
         texture: [null, 4, 0, 1, false, true, {texture: {sampleType: "float"}}],
         useTexture: [null, 5, 4, 1, false],
         solidDepthTexture: [null, 6, 0, 1, true, true, {texture: {sampleType: "depth"}}],
-        readDepths: [null, 7, 0, 1, true, false, {buffer: {type: "read-only-storage"}}],
-        writeDepths: [null, 8, 0, 1, true, false, {buffer: {type: "storage"}}],
+        frontDepthTexture: [null, 7, 0, 1, true, true, {texture: {sampleType: "unfilterable-float"}}],
+        frontColourTexture: [null, 8, 0, 1, true, true, {texture: {sampleType: "float"}}],
     }
     tFragmentConfig = {
         entryPoint: "fragment_main",
         targets: [
-            {format: "rgba8unorm", blend: {color: {srcFactor: "one", dstFactor: "one", operation: "max"}, alpha: {srcFactor: "one", dstFactor: "one", operation: "max"}}},
-            {format: "rgba8unorm", blend: {color: {srcFactor: "one", dstFactor: "one", operation: "max"}, alpha: {srcFactor: "one", dstFactor: "one", operation: "max"}}}
+            {format: "r32float", writeMask: GPUColorWrite.RED},
+            {format: "rgba8unorm", writeMask: GPUColorWrite.ALL}
         ]
     }
-    tPipelineConfig = {}
     bShaders = `
-        @binding(0) @group(0) var bBackTexture: texture_2d<f32>;
-        @binding(1) @group(0) var fBackTexture: texture_2d<f32>;
-        @binding(2) @group(0) var bFrontTexture: texture_2d<f32>;
-        @binding(3) @group(0) var fFrontTexture: texture_2d<f32>;
-
-        struct FragmentOutput {
-            @location(0) backColour: vec4f,
-            @location(1) frontColour: vec4f
-        }
+        @binding(0) @group(0) var backTexture: texture_2d<f32>;
+        @binding(1) @group(0) var frontTexture: texture_2d<f32>;
 
         @vertex
         fn vertex_main(@builtin(vertex_index) vertIndex: u32) -> @builtin(position) vec4f {
@@ -335,60 +261,33 @@ class WebGPU {
             return vec4(position[vertIndex], 0.0, 1.0);
         }
 
-        fn blend(backColour: vec4f, frontColour: vec4f) -> vec4f {
-            let blendedRGB = frontColour.rgb + backColour.rgb * (1 - frontColour.a);
-            let blendedAlpha = frontColour.a + backColour.a * (1 - frontColour.a);
-
-            return vec4f(blendedRGB, blendedAlpha);
-        }
-
         @fragment
-        fn fragment_main(@builtin(position) position: vec4f) -> FragmentOutput {
+        fn fragment_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
 
             let fragCoords = vec2i(position.xy);
 
-            let bBackColour = textureLoad(bBackTexture, fragCoords, 0);
-            let fBackColour = textureLoad(fBackTexture, fragCoords, 0);
+            let backColour = textureLoad(backTexture, fragCoords, 0);
+            var frontColour = textureLoad(frontTexture, fragCoords, 0);
+            let alphaMultiplier = 1.0 - frontColour.a;
 
-            let bFrontColour = textureLoad(bFrontTexture, fragCoords, 0);
-            let fFrontColour = textureLoad(fFrontTexture, fragCoords, 0);
+            frontColour.r += backColour.r * backColour.a * alphaMultiplier;
+            frontColour.g += backColour.g * backColour.a * alphaMultiplier;
+            frontColour.b += backColour.b * backColour.a * alphaMultiplier;
 
-            
-            // var alphaMultiplier = 1.0 - fBackColour.a;
+            frontColour.a = 1.0 - alphaMultiplier * (1.0 - backColour.a);
 
-            // fBackColour.r += bBackColour.r * bBackColour.a * alphaMultiplier;
-            // fBackColour.g += bBackColour.g * bBackColour.a * alphaMultiplier;
-            // fBackColour.b += bBackColour.b * bBackColour.a * alphaMultiplier;
-
-            // fBackColour.a = 1.0 - alphaMultiplier * (1.0 - bBackColour.a);
-
-
-            // alphaMultiplier = 1.0 - fFrontColour.a;
-
-            // fFrontColour.r += bFrontColour.r * bFrontColour.a * alphaMultiplier;
-            // fFrontColour.g += bFrontColour.g * bFrontColour.a * alphaMultiplier;
-            // fFrontColour.b += bFrontColour.b * bFrontColour.a * alphaMultiplier;
-
-            // fFrontColour.a = 1.0 - alphaMultiplier * (1.0 - bFrontColour.a);
-
-
-            var output: FragmentOutput;
-            output.backColour = blend(bBackColour, fBackColour);
-            output.frontColour = blend(bFrontColour, fFrontColour);
-
-            return output;
+            return frontColour;
         }
     `
     bUniforms = {
-        bBack: [null, 0, 0, 1, false, true, {texture: {sampleType: "float"}}],
-        fBack: [null, 1, 0, 1, false, true, {texture: {sampleType: "float"}}],
-        bFront: [null, 2, 0, 1, false, true, {texture: {sampleType: "float"}}],
-        fFront: [null, 3, 0, 1, false, true, {texture: {sampleType: "float"}}],
+        back: [null, 0, 0, 1, false, true, {texture: {sampleType: "float"}}],
+        front: [null, 1, 0, 1, false, true, {texture: {sampleType: "float"}}],
     }
     bFragmentConfig = {
         targets: [
-            {format: "rgba8unorm"},
-            {format: "rgba8unorm"}
+            {
+                format: "rgba8unorm",
+            }
         ]
     }
     fShaders = `
@@ -437,40 +336,26 @@ class WebGPU {
             return vec4(position[vertIndex], 0.0, 1.0);
         }
 
-        fn blend(backColour: vec4f, frontColour: vec4f) -> vec4f {
-            let blendedRGB = frontColour.rgb + backColour.rgb * (1 - frontColour.a);
-            let blendedAlpha = frontColour.a + backColour.a * (1 - frontColour.a);
-
-            return vec4f(blendedRGB, blendedAlpha);
-        }
-
         @fragment
         fn fragment_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
 
             let fragCoords = vec2i(position.xy);
 
             let backColour = textureLoad(backTexture, fragCoords, 0);
-            let frontColour = textureLoad(frontTexture, fragCoords, 0);
-
-            // let preFront = frontColour.rgb * frontColour.a;
-
-            // let blendedColour = preFront + backColour.rgb * (1 - frontColour.a);
-
-            // let blendedAlpha = frontColour.a + backColour.a * (1 - frontColour.a);
-
-            // let alphaMultiplier = 1.0 - frontColour.a;
+            var frontColour = textureLoad(frontTexture, fragCoords, 0);
+            let alphaMultiplier = 1.0 - frontColour.a;
 
             // frontColour.r = frontColour.r * frontColour.a + backColour.r * (1.0 - frontColour.a);
             // frontColour.g = frontColour.g * frontColour.a + backColour.g * (1.0 - frontColour.a);
             // frontColour.b = frontColour.b * frontColour.a + backColour.b * (1.0 - frontColour.a);
 
-            // frontColour.r += backColour.r * backColour.a * alphaMultiplier;
-            // frontColour.g += backColour.g * backColour.a * alphaMultiplier;
-            // frontColour.b += backColour.b * backColour.a * alphaMultiplier;
+            frontColour.r += backColour.r * backColour.a * alphaMultiplier;
+            frontColour.g += backColour.g * backColour.a * alphaMultiplier;
+            frontColour.b += backColour.b * backColour.a * alphaMultiplier;
 
-            // frontColour.a = 1.0 - alphaMultiplier * (1.0 - backColour.a);
+            frontColour.a = 1.0 - alphaMultiplier * (1.0 - backColour.a);
 
-            return blend(backColour, frontColour);
+            return frontColour;
         }
     `
     fUniforms = {
@@ -506,8 +391,7 @@ class WebGPU {
     lcwidth = 0
     lcheight = 0
     depthTexture
-    depthLayers = 5
-    renderScale = 1
+    depthLayers = 10
     async setup(id="gpucanvas") {
         window.gpucanvas = document.getElementById(id)
         
@@ -564,7 +448,7 @@ class WebGPU {
             mesh.updateBuffers()
         }
 
-        this.createShader("translucent", this.tShaders, this.tUniforms, this.vertexConfig, this.tFragmentConfig, this.tPipelineConfig)
+        this.createShader("translucent", this.tShaders, this.tUniforms, this.vertexConfig, this.tFragmentConfig, this.dPipelineConfig)
         this.createShader("final", this.fShaders, this.fUniforms, {}, this.fFragmentConfig, {})
         this.createShader("debug", this.debugShaders, this.debugUniforms, {}, this.fragmentConfig, {})
         this.createShader("blend", this.bShaders, this.bUniforms, {}, this.bFragmentConfig, {})
@@ -604,10 +488,6 @@ class WebGPU {
     }
     onReady() {
 
-    }
-    resizeCanvas() {
-        gpucanvas.width = window.innerWidth
-        gpucanvas.height = window.innerHeight
     }
     createShader(name, shaders, uniforms, vertexConfig, fragmentConfig, pipelineConfig) {
         if (!(name in this.shaders)) {
@@ -756,112 +636,67 @@ class WebGPU {
                 usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
                 label: "depthTexture"
             })
-
-            this.frontColour1Texture = device.createTexture({
+            this.depthPeelTexture = device.createTexture({
+                size: [gpucanvas.width, gpucanvas.height],
+                format: "r32float",
+                usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+                label: "depthPeelTexture"
+            })
+    
+            this.lastDepthPeelTexture = device.createTexture({
+                size: [gpucanvas.width, gpucanvas.height],
+                format: "r32float",
+                usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+                label: "depthPeelTexture"
+            })
+          
+            this.depthPeel2Texture = device.createTexture({
+                size: [gpucanvas.width, gpucanvas.height],
+                format: "depth24plus",
+                usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+                label: "depthPeel2Texture"
+            })
+            this.frontColourTexture = device.createTexture({
                 size: [gpucanvas.width, gpucanvas.height],
                 format: "rgba8unorm",
                 usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-                label: "frontColour1Texture"
+                label: "frontColourTexture"
             })
-            this.frontColour2Texture = device.createTexture({
+            this.blendColourTexture = device.createTexture({
                 size: [gpucanvas.width, gpucanvas.height],
                 format: "rgba8unorm",
                 usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-                label: "frontColour2Texture"
+                label: "blendColourTexture"
             })
-            this.frontColour3Texture = device.createTexture({
+    
+            this.lastFrontColourTexture = device.createTexture({
                 size: [gpucanvas.width, gpucanvas.height],
                 format: "rgba8unorm",
                 usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-                label: "frontColour3Texture"
+                label: "frontColourTexture"
             })
-
-            this.backColour1Texture = device.createTexture({
-                size: [gpucanvas.width, gpucanvas.height],
-                format: "rgba8unorm",
-                usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-                label: "backColour1Texture"
-            })
-            this.backColour2Texture = device.createTexture({
-                size: [gpucanvas.width, gpucanvas.height],
-                format: "rgba8unorm",
-                usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-                label: "backColour2Texture"
-            })
-            this.backColour3Texture = device.createTexture({
-                size: [gpucanvas.width, gpucanvas.height],
-                format: "rgba8unorm",
-                usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-                label: "backColour3Texture"
-            })
-
-            this.depthsReadBuffer = device.createBuffer({
-                size: gpucanvas.width * gpucanvas.height * 2 * Float32Array.BYTES_PER_ELEMENT,
-                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-            })
-            this.depthsWriteBuffer = device.createBuffer({
-                size: gpucanvas.width * gpucanvas.height * 2 * Float32Array.BYTES_PER_ELEMENT,
-                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-            })
-            this.depthsSwapBuffer = device.createBuffer({
-                size: gpucanvas.width * gpucanvas.height * 2 * Float32Array.BYTES_PER_ELEMENT,
-                usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST 
-            })
-
-            this.depthsInitBuffer = device.createBuffer({
-                size: gpucanvas.width * gpucanvas.height * 2 * Float32Array.BYTES_PER_ELEMENT,
-                usage: GPUBufferUsage.COPY_SRC,
-                mappedAtCreation: true
-            })
-            var buffer = new Float32Array(this.depthsInitBuffer.getMappedRange())
-            for (let i = 0; i < buffer.length; i++) {
-                buffer[i] = 1
-            }
-            this.depthsInitBuffer.unmap()
-
-            this.depths2InitBuffer = device.createBuffer({
-                size: gpucanvas.width * gpucanvas.height * 2 * Float32Array.BYTES_PER_ELEMENT,
-                usage: GPUBufferUsage.COPY_SRC,
-                mappedAtCreation: true
-            })
-            var buffer = new Float32Array(this.depths2InitBuffer.getMappedRange())
-            for (let i = 0; i < buffer.length; i++) {
-                buffer[i] = 0
-            }
-            this.depths2InitBuffer.unmap()
 
             for (let mesh of transparent) {
-                mesh.shaderName = "defualt"
-                // for (let i = 0; i < 3; i++) delete mesh.bindGroups[i]
+                for (let i = 0; i < 6; i++) delete mesh.bindGroups[i]
             }
-
-            this.shaders.translucent.uniforms.readDepths[0] = this.depthsReadBuffer
-            this.shaders.translucent.uniforms.writeDepths[0] = this.depthsWriteBuffer
         }
 
         var depthTextureView = this.depthTexture.createView()
-
-        var frontColour1View = this.frontColour1Texture.createView()
-        var frontColour2View = this.frontColour2Texture.createView()
-        var frontColour3View = this.frontColour3Texture.createView()
-
-        var backColour1View = this.backColour1Texture.createView()
-        var backColour2View = this.backColour2Texture.createView()
-        var backColour3View = this.backColour3Texture.createView()
-
+        var depthPeelTextureView = this.depthPeelTexture.createView()
+        var lastDepthPeelTextureView = this.lastDepthPeelTexture.createView()
+        var lastFrontColourTextureView = this.lastFrontColourTexture.createView()
+        // var backDepthTextureView = this.backDepthTexture.createView()
+        var frontColourTextureView = this.frontColourTexture.createView()
         var textureView = gpuctx.getCurrentTexture().createView()
-        
+        var blendColourTextureView = this.blendColourTexture.createView()
 
-        this.clearTexture(commandEncoder, frontColour1View, [0, 0, 0, 1])
-        this.clearTexture(commandEncoder, frontColour2View, [0, 0, 0, 1])
-        this.clearTexture(commandEncoder, frontColour3View, [0, 0, 0, 1])
+        this.clearTexture(commandEncoder, depthPeelTextureView, [0, 0, 0, 0])
+        this.clearTexture(commandEncoder, lastDepthPeelTextureView, [0, 0, 0, 0])
+        this.clearTexture(commandEncoder, frontColourTextureView, [0, 0, 0, 0])
+        this.clearTexture(commandEncoder, lastFrontColourTextureView, [0, 0, 0, 0])
+        this.clearTexture(commandEncoder, blendColourTextureView, [0, 0, 0, 0])
 
-        this.clearTexture(commandEncoder, backColour1View, [0, 0, 0, 1])
-        this.clearTexture(commandEncoder, backColour2View, [0, 0, 0, 1])
-        this.clearTexture(commandEncoder, backColour3View, [0, 0, 0, 1])
-
-        var fRots = [frontColour1View, frontColour2View, frontColour3View]
-        var bRots = [backColour1View, backColour2View, backColour3View]
+        var rots = [frontColourTextureView, lastFrontColourTextureView, blendColourTextureView]
 
         var renderPassDescriptor = {
             colorAttachments: [{
@@ -892,152 +727,84 @@ class WebGPU {
 
         solidEncoder.end()
 
-        commandEncoder.copyBufferToBuffer(this.depthsInitBuffer, 0, this.depthsReadBuffer, 0, this.depthsInitBuffer.size)
-        commandEncoder.copyBufferToBuffer(this.depths2InitBuffer, 0, this.depthsWriteBuffer, 0, this.depths2InitBuffer.size)
-
-        this.cPipeline = null
-        renderPassDescriptor = {
-            colorAttachments: [{
-                clearValue: {r: 0, g: 0, b: 0, a: 0},
-                loadOp: "clear",
-                storeOp: "store",
-                view: fRots[2]
-            },{
-                clearValue: {r: 0, g: 0, b: 0, a: 0},
-                loadOp: "clear",
-                storeOp: "store",
-                view: bRots[2]
-            }]
-        }
-
-        this.shaders.translucent.uniforms.readDepths[0] = this.depthsReadBuffer
-        this.shaders.translucent.uniforms.writeDepths[0] = this.depthsWriteBuffer
-
-        var initEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
-
-        for (let mesh of transparent) {
-            if (mesh.shaderName != "translucent") {
-                mesh.setShader("translucent", this.tShaders, this.tUniforms, this.vertexConfig, this.tFragmentConfig, this.tPipelineConfig)
-                if (mesh.texture && mesh.texture.loaded) {
-                    mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[mesh.sampler], mesh.texture ? mesh.texture.texture.createView() : this.dTexture, depthTextureView])
-                } else {
-                    mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[0], this.dTexture.createView(), depthTextureView])
-                }
-            }
-            mesh.render(initEncoder)
-        } 
-    
-        initEncoder.end()
-
-        // this.debugTexture(commandEncoder, textureView, frontColourTextureView, this.depthsWriteBuffer)
-
-        let results = []
-
-        let finished = 0
-
         for (let i = 0; i < this.depthLayers; i++) {
+            // console.log(i % 2 == 0)
             this.cPipeline = null
-
-            let newi = 0
-            while (results.includes(newi)) {
-                newi++
-            }
-
             renderPassDescriptor = {
                 colorAttachments: [{
-                    clearValue: {r: 0, g: 0, b: 0, a: 0},
+                    clearValue: {r: 1, g: 0, b: 0, a: 0},
                     loadOp: "clear",
                     storeOp: "store",
-                    view: fRots[newi]
+                    view: i % 2 == 0 ? depthPeelTextureView : lastDepthPeelTextureView
                 },{
-                    clearValue: {r: 0, g: 0, b: 0, a: 0},
-                    loadOp: "clear",
+                    clearValue: {r: 0, g: 0, b: 0, a: 1},
+                    loadOp: "load",
                     storeOp: "store",
-                    view: bRots[newi]
-                }]
+                    view: rots[i % 3]
+                }],
+                depthStencilAttachment: {
+                    view: this.depthPeel2Texture.createView(),
+                    depthClearValue: 1,
+                    depthLoadOp: "clear",
+                    depthStoreOp: "store"
+                }
             }
 
-            this.shaders.translucent.uniforms.readDepths[0] = this.depthsReadBuffer
-            this.shaders.translucent.uniforms.writeDepths[0] = this.depthsWriteBuffer
-
-            // commandEncoder.copyBufferToBuffer(this.depthsReadBuffer, 0, this.depthsSwapBuffer, 0, this.depthsReadBuffer.size)
-            commandEncoder.copyBufferToBuffer(this.depthsWriteBuffer, 0, this.depthsReadBuffer, 0, this.depthsWriteBuffer.size)
-            // commandEncoder.copyBufferToBuffer(this.depthsSwapBuffer, 0, this.depthsWriteBuffer, 0, this.depthsSwapBuffer.size)
-
-            commandEncoder.copyBufferToBuffer(this.depths2InitBuffer, 0, this.depthsWriteBuffer, 0, this.depths2InitBuffer.size)
-            
-            this.clearTexture(commandEncoder, fRots[newi], [0, 0, 0, 0])
-            this.clearTexture(commandEncoder, bRots[newi], [0, 0, 0, 0])
+            this.clearTexture(commandEncoder, i % 2 == 0 ? depthPeelTextureView : lastDepthPeelTextureView, [0, 0, 0, 0])
+            this.clearTexture(commandEncoder, rots[i % 3], [0, 0, 0, 0])
 
             var transparentEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
 
+            let lastD = i % 2 == 0 ? lastDepthPeelTextureView : depthPeelTextureView
+            let lastC = rots[(i + 1) % 3]
+            let id = (i % 2) * 3 + (i % 3)
+
             for (let mesh of transparent) {
-                // if (mesh.shaderName != "translucent") {
-                //     mesh.setShader("translucent", this.tShaders, this.tUniforms, this.vertexConfig, this.tFragmentConfig, this.tPipelineConfig)
-                // }
-                // mesh.setShader("translucent", this.tShaders, this.tUniforms, this.vertexConfig, this.tFragmentConfig, this.tPipelineConfig)
-                // // if (!(id in mesh.bindGroups)) {
-                    
-                // //     mesh.bindGroups[id] = mesh.bindGroups.translucent
-                // // }
-                // if (mesh.texture && mesh.texture.loaded) {
-                //     mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[mesh.sampler], mesh.texture ? mesh.texture.texture.createView() : this.dTexture, depthTextureView])
-                // } else {
-                //     mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[0], this.dTexture.createView(), depthTextureView])
-                // }
+                if (mesh.shaderName != "translucent") {
+                    mesh.setShader("translucent", this.tShaders, this.tUniforms, this.vertexConfig, this.tFragmentConfig, this.dPipelineConfig)
+                }
+                if (!(id in mesh.bindGroups)) {
+                    if (mesh.texture && mesh.texture.loaded) {
+                        mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[mesh.sampler], mesh.texture ? mesh.texture.texture.createView() : this.dTexture, depthTextureView, lastD, lastC])
+                    } else {
+                        mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[0], this.dTexture.createView(), depthTextureView, lastD, lastC])
+                    }
+                    mesh.bindGroups[id] = mesh.bindGroups.translucent
+                }
                 // if (mesh.texture && mesh.texture.loaded) {
                 //     mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[mesh.sampler], mesh.texture ? mesh.texture.texture.createView() : this.dTexture, depthTextureView, lastD, lastC])
                 // } else {
                 //     mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[0], this.dTexture.createView(), depthTextureView, lastD, lastC])
                 // }
-                // mesh.bindGroups.translucent = mesh.bindGroups[id]
+                mesh.bindGroups.translucent = mesh.bindGroups[id]
+
                 mesh.render(transparentEncoder)
             } 
 
-            results.push(newi)
-            finished = newi
-
             transparentEncoder.end()
 
-            if (results.length >= 2) {
-                let missing = 0
-                while (results.includes(missing)) {
-                    missing++
-                }
-
+            if (i < this.depthLayers-1) {
                 renderPassDescriptor = {
                     colorAttachments: [{
                         clearValue: {r: 0, g: 0, b: 0, a: 1},
                         loadOp: 'load',
                         storeOp: 'store',
-                        view: bRots[missing]
-                    },{
-                        clearValue: {r: 0, g: 0, b: 0, a: 1},
-                        loadOp: 'load',
-                        storeOp: 'store',
-                        view: fRots[missing]
+                        view: rots[(i + 2) % 3]
                     }]
                 }
 
-                this.clearTexture(commandEncoder, bRots[missing], [0, 0, 0, 0])
-                this.clearTexture(commandEncoder, fRots[missing], [0, 0, 0, 0])
+                this.clearTexture(commandEncoder, rots[(i + 2) % 3], [0, 0, 0, 0])
     
                 var blendEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
                 this.cPipeline = null
-                // console.log(i - 0, i - 1)
+    
                 this.blendMesh.setShader("blend", this.bShaders, this.bUniforms, {}, this.bFragmentConfig, {})
-                this.blendMesh.createBindGroup(this.shaders.blend.bindGroupLayout, [bRots[results[0]], bRots[results[1]], fRots[results[1]], fRots[results[0]]])
+                this.blendMesh.createBindGroup(this.shaders.blend.bindGroupLayout, [rots[(i + 0) % 3], rots[(i + 1) % 3]])
                 this.blendMesh.render(blendEncoder)
         
                 blendEncoder.end()
-                results = [missing]
-                finished = missing
             }
-
-            // this.debugTexture(commandEncoder, textureView, backColourTextureView, this.depthsWriteBuffer)
         }
-        // console.log("end")
-        // this.debugTexture(commandEncoder, textureView, fRots[finished], this.depthsWriteBuffer)
 
         // renderPassDescriptor = {
         //     colorAttachments: [{
@@ -1095,9 +862,6 @@ class WebGPU {
 
         // transparentEncoder.end()
 
-
-
-
         renderPassDescriptor = {
             colorAttachments: [{
                 clearValue: {r: 0, g: 0, b: 0, a: 1},
@@ -1107,22 +871,17 @@ class WebGPU {
             }]
         }
 
-        // let i = this.depthLayers+1
-
-        // console.log((i + 2) % 3)
-
         var finalEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
 
+        let i = this.depthLayers+1
+
         this.finalMesh.setShader("final", this.fShaders, this.fUniforms, {}, this.fFragmentConfig, {})
-        this.finalMesh.createBindGroup(this.shaders.final.bindGroupLayout, [bRots[finished], fRots[finished]])
+        this.finalMesh.createBindGroup(this.shaders.final.bindGroupLayout, [rots[(i + 1) % 3], rots[(i + 2) % 3]])
         this.finalMesh.render(finalEncoder)
 
         finalEncoder.end()
 
-
-
-        // console.log((i + 0) % 3, (i + 1) % 3)
-        // this.debugTexture(commandEncoder, textureView, bRots[(i + 2) % 3], this.depthsWriteBuffer)
+        // this.debugTexture(commandEncoder, textureView, rots[(i + 1) % 3])
         
         let start = performance.now()
         device.queue.submit([commandEncoder.finish()])
@@ -1145,7 +904,7 @@ class WebGPU {
 
         pass.end()
     }
-    debugTexture(commandEncoder, canvasView, textureView, storage) {
+    debugTexture(commandEncoder, canvasView, textureView) {
 
         var renderPassDescriptor = {
             colorAttachments: [{
@@ -1157,8 +916,7 @@ class WebGPU {
         }
 
         let pass = commandEncoder.beginRenderPass(renderPassDescriptor)
-        
-        this.shaders.debug.uniforms.storage[0] = storage
+
         this.debugMesh.setShader("debug", this.debugShaders, this.debugUniforms, {}, this.fragmentConfig, {})
         this.debugMesh.createBindGroup(this.shaders.debug.bindGroupLayout, [textureView])
         this.debugMesh.render(pass)
@@ -1206,8 +964,7 @@ class WebGPU {
                         if (!mesh.transparent) {
                             mesh.createBindGroup(webgpu.shaders[mesh.shaderName].bindGroupLayout, [webgpu.samplers[mesh.sampler], this.texture.createView()])
                         } else {
-                            // for (let i = 0; i < 3; i++) delete mesh.bindGroups[i]
-                            mesh.shaderName = "default"
+                            for (let i = 0; i < 6; i++) delete mesh.bindGroups[i]
                         }
                     }
                 }
