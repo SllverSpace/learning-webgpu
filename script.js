@@ -267,7 +267,7 @@ function frame(timestamp) {
     }
     gpuAvg /= webgpu.gpuTimes.length
 
-    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2}`)
+    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2} \nUsing Depth Peeling`)
 
     input.updateInput()
 
