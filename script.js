@@ -162,6 +162,29 @@ for (let i = 0; i < 20; i++) {
 line.transparent = true
 line.updateBuffers()
 
+
+var line2 = new webgpu.Mesh(-25, 1, -12.5, 1, 1, 1, [], [], [])
+for (let i = 0; i < 50; i++) {
+    line2.vertices.push(
+        i, 0, 0,
+        i, 0, 1,
+        i, 1, 0,
+        i, 1, 1
+    )
+    line2.faces.push(
+        i*4, i*4+1, i*4+3,
+        i*4, i*4+2, i*4+3
+    )
+    let c = hslToRgb((i / 50) * 360, 100, 50, 0.5)
+    c[0] /= 255; c[1] /= 255; c[2] /= 255
+    line2.colours.push(
+        ...c, ...c, ...c, ...c
+    )
+}
+line2.transparent = true
+line2.updateBuffers()
+
+
 if (houseAlpha < 1) {
     for (let mesh of house) {
         mesh.transparent = true
@@ -224,6 +247,17 @@ function frame(timestamp) {
         vel.y -= speed*delta
     }
 
+    if (jKeys["KeyF"]) {
+        webgpu.dualDepthPeeling = !webgpu.dualDepthPeeling
+    }
+
+    if (jKeys["KeyE"]) {
+        webgpu.depthLayers += 1
+    }
+    if (jKeys["KeyQ"]) {
+        webgpu.depthLayers -= 1
+    }
+
     vel.x = lerp(vel.x, 0, delta*100*0.1)
     vel.y = lerp(vel.y, 0, delta*100*0.1)
     vel.z = lerp(vel.z, 0, delta*100*0.1)
@@ -252,7 +286,7 @@ function frame(timestamp) {
     webgpu.render([0.4, 0.8, 1, 1])
 
     cpuTimes.push(performance.now()-start)
-    if (cpuTimes.length > 100) cpuTimes.splice(0, 1)
+    if (cpuTimes.length > 500) cpuTimes.splice(0, 1)
 
     let cpuAvg = 0
     for (let time of cpuTimes) {
@@ -266,7 +300,7 @@ function frame(timestamp) {
     }
     gpuAvg /= webgpu.gpuTimes.length
 
-    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2}`)
+    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2} \n \n${webgpu.dualDepthPeeling ? "Dual Depth Peeling" : "Depth Peeling"} \nRendering Passes: ${webgpu.renderingDepthLayers} \nMax Depth Layers: ${webgpu.depthLayers * 2} \n \nControls: \nQ/E Change Depth Layers \nF Change Rendering Mode`)
 
     input.updateInput()
 
