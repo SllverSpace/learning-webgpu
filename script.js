@@ -300,7 +300,7 @@ function frame(timestamp) {
     }
     gpuAvg /= webgpu.gpuTimes.length
 
-    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2} \n \n${webgpu.dualDepthPeeling ? "Dual Depth Peeling" : "Depth Peeling"} \nRendering Passes: ${webgpu.renderingDepthLayers} \nMax Depth Layers: ${webgpu.depthLayers * 2} \n \nControls: \nQ/E Change Depth Layers \nF Change Rendering Mode`)
+    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2} \n \n${webgpu.dualDepthPeeling ? "Dual Depth Peeling - Faster on high end devices" : "Depth Peeling - Faster on low to mid range devices"} \nRendering Passes: ${webgpu.renderingDepthLayers} \nMax Depth Layers: ${webgpu.depthLayers * 2} \n \nControls: \nQ/E Change Depth Layers \nF Change Rendering Mode`)
 
     input.updateInput()
 
