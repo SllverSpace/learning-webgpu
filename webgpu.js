@@ -867,6 +867,7 @@ class WebGPU {
         }
     }
     render(background=[0, 0, 0, 1]) {
+        if (this.depthLayers < 0) this.depthLayers = 0
 
         var newMethod = this.dualDepthPeeling != this.lastDualDepthPeeling
         this.lastDualDepthPeeling = this.dualDepthPeeling
