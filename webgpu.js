@@ -47,27 +47,51 @@ class WebGPU {
         storage: [null, 1, 0, 1, true, false, {buffer: {type: "read-only-storage"}}],
     }
     dShaders = `
+        struct Light {
+            position: vec3<f32>,
+            colour: vec3<f32>
+        }
+
+        struct Material {
+            ambient: vec3<f32>,
+            diffuse: vec3<f32>,
+            specular: vec3<f32>,
+            shininess: f32,
+        }
+
         @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
         @group(0) @binding(1) var<uniform> uProjection: mat4x4<f32>;
         @group(0) @binding(2) var<uniform> uModel: mat4x4<f32>;
-        @group(0) @binding(3) var uSampler: sampler;
-        @group(0) @binding(4) var uTexture: texture_2d<f32>;
-        @group(0) @binding(5) var<uniform> useTexture: u32;
+        @group(0) @binding(3) var<uniform> uNormal: mat4x4<f32>;
+        @group(0) @binding(4) var uSampler: sampler;
+        @group(0) @binding(5) var uTexture: texture_2d<f32>;
+        @group(0) @binding(6) var<uniform> useTexture: u32;
+        @group(0) @binding(7) var<uniform> light: Light;
+        @group(0) @binding(8) var<uniform> material: Material;
+        @group(0) @binding(9) var<uniform> camera: vec3<f32>;
 
         struct VertexOut {
         @builtin(position) position : vec4f,
         @location(0) color : vec4f,
-        @location(1) uv : vec2f
+        @location(1) normal : vec3f,
+        @location(2) uv : vec2f,
+        @location(3) pos : vec3f
         }
 
         @vertex
         fn vertex_main(@location(0) position: vec4f,
-                    @location(1) color: vec4f, @location(2) uv: vec2f) -> VertexOut
-        {
+                    @location(1) color: vec4f, @location(2) normal: vec3f, @location(3) uv: vec2f) -> VertexOut
+        {  
+
+            let translated = uModel * vec4<f32>(position.xyz, 1.0);
+
             var output : VertexOut;
-            output.position = uProjection * uView * uModel * vec4<f32>(position.xyz, 1.0);
+            output.position = uProjection * uView * translated;
             output.color = color;
+            output.normal = normalize((uNormal * vec4(normal.x, normal.y, normal.z, 0)).xyz);
+            output.normal.z = -output.normal.z;
             output.uv = uv;
+            output.pos = vec3<f32>(translated[0], translated[1], -translated[2]);
             return output;
         }
 
@@ -76,11 +100,27 @@ class WebGPU {
         @fragment
         fn fragment_main(fragData: VertexOut) -> @location(0) vec4f
         {
-            var color = fragData.color;
+            var vertexColour = fragData.color;
             if (useTexture != 0u) {
-                color = textureSample(uTexture, uSampler, fragData.uv) * fragData.color;
+                vertexColour = textureSample(uTexture, uSampler, fragData.uv) * fragData.color;
             }
-            return color;
+
+            let normal = normalize(fragData.normal);
+            let lightDir = normalize(light.position - fragData.pos);
+            let viewDir = normalize(camera - fragData.pos);
+            let reflectDir = reflect(-lightDir, normal);
+
+            let ambient = light.colour * material.ambient;
+
+            let diff = max(dot(normal, lightDir), 0.0);
+            let diffuse = material.diffuse * diff * light.colour;
+
+            let spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
+            let specular = material.specular * spec * light.colour;
+
+            let colour = ambient + diffuse + specular;
+
+            return vertexColour * vec4f(colour, 1);
         }
     `
     dShaderName = "default"
@@ -88,15 +128,19 @@ class WebGPU {
         view: [null, 0, 16*4, 0, true],
         projection: [null, 1, 16*4, 0, true],
         model: [null, 2, 16*4, 0, false],
-        sampler: [null, 3, 0, 1, false, true, {sampler: {type: "non-filtering"}}],
-        texture: [null, 4, 0, 1, false, true, {texture: {sampleType: "float"}}],
-        useTexture: [null, 5, 4, 1, false]
+        normal: [null, 3, 16*4, 0, false],
+        sampler: [null, 4, 0, 1, false, true, {sampler: {type: "non-filtering"}}],
+        texture: [null, 5, 0, 1, false, true, {texture: {sampleType: "float"}}],
+        useTexture: [null, 6, 4, 1, false],
+        light: [null, 7, 16*4, 1, true],
+        material: [null, 8, 16*4, 1, false],
+        camera: [null, 9, 3*4, 1, true],
     }
     vertexConfig = {
         entryPoint: "vertex_main",
         buffers: [
             {
-                arrayStride: 9 * 4,
+                arrayStride: 12 * 4,
                 attributes: [
                     {
                         shaderLocation: 0,
@@ -111,6 +155,11 @@ class WebGPU {
                     {
                         shaderLocation: 2,
                         offset: 4 * 7,
+                        format: "float32x3"
+                    },
+                    {
+                        shaderLocation: 3,
+                        offset: 4 * 10,
                         format: "float32x2"
                     }
                 ]
@@ -131,44 +180,88 @@ class WebGPU {
         ]
     }
     tTop = `
+        struct Light {
+            position: vec3<f32>,
+            colour: vec3<f32>
+        }
+
+        struct Material {
+            ambient: vec3<f32>,
+            diffuse: vec3<f32>,
+            specular: vec3<f32>,
+            shininess: f32,
+        }
+
         @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
         @group(0) @binding(1) var<uniform> uProjection: mat4x4<f32>;
         @group(0) @binding(2) var<uniform> uModel: mat4x4<f32>;
-        @group(0) @binding(3) var uSampler: sampler;
-        @group(0) @binding(4) var uTexture: texture_2d<f32>;
-        @group(0) @binding(5) var<uniform> useTexture: u32;
+        @group(0) @binding(3) var<uniform> uNormal: mat4x4<f32>;
+        @group(0) @binding(4) var uSampler: sampler;
+        @group(0) @binding(5) var uTexture: texture_2d<f32>;
+        @group(0) @binding(6) var<uniform> useTexture: u32;
+        @group(0) @binding(7) var<uniform> light: Light;
+        @group(0) @binding(8) var<uniform> material: Material;
+        @group(0) @binding(9) var<uniform> camera: vec3<f32>;
     `
     tVertex = `
         struct VertexOut {
             @builtin(position) position : vec4f,
             @location(0) color : vec4f,
-            @location(1) uv : vec2f
+            @location(1) normal : vec3f,
+            @location(2) uv : vec2f,
+            @location(3) pos : vec3f
         }
 
         @vertex
         fn vertex_main(@location(0) position: vec4f,
-                    @location(1) color: vec4f, @location(2) uv: vec2f) -> VertexOut
+                    @location(1) color: vec4f, @location(2) normal: vec3f, @location(3) uv: vec2f) -> VertexOut
         {
+            let translated = uModel * vec4<f32>(position.xyz, 1.0);
+
             var output : VertexOut;
-            output.position = uProjection * uView * uModel * vec4<f32>(position.xyz, 1.0);
+            output.position = uProjection * uView * translated;
             output.color = color;
+            output.normal = normalize((uNormal * vec4(normal.x, normal.y, normal.z, 0)).xyz);
+            output.normal.z = -output.normal.z;
             output.uv = uv;
+            output.pos = vec3<f32>(translated[0], translated[1], -translated[2]);
             return output;
         }
     `
     tFragment = `
-        var color = fragData.color;
+        var vertexColour = fragData.color;
         if useTexture != 0u {
-            color = textureSample(uTexture, uSampler, fragData.uv) * fragData.color;
+            vertexColour = textureSample(uTexture, uSampler, fragData.uv) * fragData.color;
         }
+
+        let normal = normalize(fragData.normal);
+        let lightDir = normalize(light.position - fragData.pos);
+        let viewDir = normalize(camera - fragData.pos);
+        let reflectDir = reflect(-lightDir, normal);
+
+        let ambient = light.colour * material.ambient;
+
+        let diff = max(dot(normal, lightDir), 0.0);
+        let diffuse = material.diffuse * diff * light.colour;
+
+        let spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
+        let specular = material.specular * spec * light.colour;
+
+        let colour = ambient + diffuse + specular;
+
+        let color = vertexColour * vec4f(colour, 1);
     `
     tUniforms = {
         view: [null, 0, 16*4, 0, true],
         projection: [null, 1, 16*4, 0, true],
         model: [null, 2, 16*4, 0, false],
-        sampler: [null, 3, 0, 1, false, true, {sampler: {type: "non-filtering"}}],
-        texture: [null, 4, 0, 1, false, true, {texture: {sampleType: "float"}}],
-        useTexture: [null, 5, 4, 1, false],
+        normal: [null, 3, 16*4, 0, false],
+        sampler: [null, 4, 0, 1, false, true, {sampler: {type: "non-filtering"}}],
+        texture: [null, 5, 0, 1, false, true, {texture: {sampleType: "float"}}],
+        useTexture: [null, 6, 4, 1, false],
+        light: [null, 7, 16*4, 1, true],
+        material: [null, 8, 16*4, 1, false],
+        camera: [null, 9, 3*4, 1, true],
     }
     tFragmentConfig = {
         entryPoint: "fragment_main",
@@ -424,11 +517,11 @@ class WebGPU {
             mesh.updateBuffers()
         }
 
-        let tShaders = this.createDepthPeelingShaders(6, this.tTop, this.tVertex, this.tFragment)
-        let tUniforms = this.createDepthPeelingUniforms(6, this.tUniforms)
+        let tShaders = this.createDepthPeelingShaders(10, this.tTop, this.tVertex, this.tFragment)
+        let tUniforms = this.createDepthPeelingUniforms(10, this.tUniforms)
 
-        let tdShaders = this.createDualDepthPeelingShaders(6, this.tTop, this.tVertex, this.tFragment)
-        let tdUniforms = this.createDualDepthPeelingUniforms(6, this.tUniforms)
+        let tdShaders = this.createDualDepthPeelingShaders(10, this.tTop, this.tVertex, this.tFragment)
+        let tdUniforms = this.createDualDepthPeelingUniforms(10, this.tUniforms)
 
         this.depthPeelingShaders = tShaders
         this.dualDepthPeelingShaders = tdShaders
@@ -640,9 +733,10 @@ class WebGPU {
                         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
                     })
                 }
+                let visibility = [GPUShaderStage.VERTEX, GPUShaderStage.FRAGMENT, GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT]
                 let entry = {
                     binding: uniforms[name][1],
-                    visibility: uniforms[name][3] == 0 ? GPUShaderStage.VERTEX : GPUShaderStage.FRAGMENT,
+                    visibility: visibility[uniforms[name][3]],
                 }
                
                 if (uniforms[name][6]) {
@@ -1053,10 +1147,12 @@ class WebGPU {
                         mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[0], this.dTexture.createView(), depthTextureView, lastD, lastC])
                     }
                     mesh.bindGroups[id] = mesh.bindGroups.translucent
+                    mesh.uniformsB[id] = mesh.uniformsB.translucent
                 }
                 mesh.bindGroups.translucent = mesh.bindGroups[id]
+                mesh.uniformsB.translucent = mesh.uniformsB[id]
 
-                device.queue.writeBuffer(mesh.uniformsB.drawnIndex, 0, drawnIndexBuffer, 0, drawnIndexBuffer.length)
+                device.queue.writeBuffer(mesh.uniformsB.translucent.drawnIndex, 0, drawnIndexBuffer, 0, drawnIndexBuffer.length)
 
                 mesh.render(transparentEncoder)
             } 
@@ -1209,11 +1305,12 @@ class WebGPU {
                         mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.samplers[0], this.dTexture.createView(), depthTextureView])
                     }
                     mesh.bindGroups[id] = mesh.bindGroups.translucentd
+                    mesh.uniformsB[id] = mesh.uniformsB.translucentd
                 }
 
                 mesh.bindGroups.translucentd = mesh.bindGroups[id]
-
-                device.queue.writeBuffer(mesh.uniformsB.drawnIndex, 0, drawnIndexBuffer, 0, drawnIndexBuffer.length)
+                mesh.uniformsB.translucentd = mesh.uniformsB[id]
+                device.queue.writeBuffer(mesh.uniformsB.translucentd.drawnIndex, 0, drawnIndexBuffer, 0, drawnIndexBuffer.length)
 
                 mesh.render(transparentEncoder)
             } 
@@ -1371,14 +1468,22 @@ class WebGPU {
             bindGroupInfo = null
             bindGroups = {}
             updateModel = true
+            visible = true
             model
-            constructor(x, y, z, width, height, depth, vertices=[], faces=[], colours=[]) {
+            material = {
+                ambient: [0.5, 0.5, 0.5],
+                diffuse: [1, 1, 1],
+                specular: [0.1, 0.1, 0.1],
+                shininess: 20
+            }
+            constructor(x, y, z, width, height, depth, vertices=[], faces=[], colours=[], normals=[]) {
                 this.pos = {x: x, y: y, z: z}
                 this.size = {x: width, y: height, z: depth}
                 this.rot = {x: 0, y: 0, z: 0}
                 this.vertices = vertices
                 this.colours = colours
                 this.faces = faces
+                this.normals = normals
                 this.uvs = []
                 this.shaderName = webgpu.dShaderName
                 this.shaders = webgpu.dShaders
@@ -1391,6 +1496,14 @@ class WebGPU {
                     webgpu.createShader(this.shaderName, this.shaders, this.uniforms, this.vertexConfig, this.fragmentConfig, this.pipelineConfig)
                     this.createBindGroup(webgpu.shaders[this.shaderName].bindGroupLayout, [webgpu.samplers[0], webgpu.dTexture])
                     this.updateBuffers()
+                }
+            }
+            setTMat() {
+                this.material = {
+                    ambient: [0.5, 0.5, 0.5],
+                    diffuse: [1, 1, 1],
+                    specular: [0.9, 0.9, 0.9],
+                    shininess: 128
                 }
             }
             setShader(shaderName, shaders, uniforms, vertexConfig, fragmentConfig, pipelineConfig) {
@@ -1422,10 +1535,11 @@ class WebGPU {
                 let bLayout = {layout: layout, entries: []}
 
                 let uniforms = webgpu.shaders[this.shaderName].uniforms
+                this.uniformsB[this.shaderName] = {}
                 
                 for (let name in uniforms) {
                     if (!uniforms[name][4] && !uniforms[name][5]) {
-                        this.uniformsB[name] = device.createBuffer({
+                        this.uniformsB[this.shaderName][name] = device.createBuffer({
                             size: uniforms[name][2],
                             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
                         })
@@ -1438,7 +1552,7 @@ class WebGPU {
                         bLayout.entries.push({
                             binding: uniforms[name][1],
                             resource: {
-                                buffer: uniforms[name][4] ? uniforms[name][0] : this.uniformsB[name]
+                                buffer: uniforms[name][4] ? uniforms[name][0] : this.uniformsB[this.shaderName][name]
                             }
                         })
                     } else {
@@ -1463,6 +1577,7 @@ class WebGPU {
                     let vertex = [
                         this.vertices[i*3], this.vertices[i*3+1], this.vertices[i*3+2], 
                         this.colours[i*4], this.colours[i*4+1], this.colours[i*4+2], this.colours[i*4+3],
+                        this.normals[i*3], this.normals[i*3+1], this.normals[i*3+2],
                         this.uvs[i*2] ? this.uvs[i*2] : 0, this.uvs[i*2+1] ? this.uvs[i*2+1] : 0
                     ]
                     for (let buffer of this.customBuffers) {
@@ -1495,14 +1610,20 @@ class WebGPU {
 
                 if (this.updateModel) {
                     this.model = getModelMatrix(this.pos.x, this.pos.y, this.pos.z, this.rot.x, this.rot.y, this.rot.z, this.size.x, this.size.y, this.size.z)
+                    this.normalMat = getNormalMatrix(this.rot.x, this.rot.y, this.rot.z, this.size.x, this.size.y, this.size.z)
                 }
                 let modelMatrix = this.model
+                let normalMatrix = this.normalMat
 
-                device.queue.writeBuffer(this.uniformsB.model, 0, modelMatrix, 0, modelMatrix.length)
+                let materialBuffer = new Float32Array([...this.material.ambient, 0, ...this.material.diffuse, 0, ...this.material.specular, this.material.shininess])
+
+                device.queue.writeBuffer(this.uniformsB[this.shaderName].model, 0, modelMatrix, 0, modelMatrix.length)
+                device.queue.writeBuffer(this.uniformsB[this.shaderName].normal, 0, normalMatrix, 0, normalMatrix.length)
+                device.queue.writeBuffer(this.uniformsB[this.shaderName].material, 0, materialBuffer, 0, materialBuffer.length)
 
                 if (this.useTexture != webgpu.cUseTexture) {
                     let utBuffer = new Uint32Array([this.useTexture ? 1 : 0])
-                    device.queue.writeBuffer(this.uniformsB.useTexture, 0, utBuffer, 0, utBuffer.length)
+                    device.queue.writeBuffer(this.uniformsB[this.shaderName].useTexture, 0, utBuffer, 0, utBuffer.length)
                     webgpu.cUseTexture = this.useTexture
                 }
 
@@ -1515,7 +1636,7 @@ class WebGPU {
                 passEncoder.drawIndexed(this.faces.length, 1, 0, 0, 0)
             }
             render(passEncoder) {
-                if (this.faces.length <= 0) return
+                if (!this.visible || this.faces.length <= 0) return
                 if (this.texture != null) {
                     if (!this.texture.loaded) return
                 }
@@ -1550,7 +1671,33 @@ class WebGPU {
 					// +Y
 					8, 9, 10,
 					11, 9, 8,
-				])
+				],[],[
+                    1, 0, 0,
+                    1, 0, 0,
+                    1, 0, 0,
+                    1, 0, 0,
+                    -1, 0, 0,
+                    -1, 0, 0,
+                    -1, 0, 0,
+                    -1, 0, 0,
+                    0, 1, 0,
+                    0, 1, 0,
+                    0, 1, 0,
+                    0, 1, 0,
+                    0, -1, 0,
+                    0, -1, 0,
+                    0, -1, 0,
+                    0, -1, 0,
+                    0, 0, 1,
+                    0, 0, 1,
+                    0, 0, 1,
+                    0, 0, 1,
+                    0, 0, -1,
+                    0, 0, -1,
+                    0, 0, -1,
+                    0, 0, -1,
+                ])
+                this.isBox = true
 				this.oneSide = true
 				this.colour = colour
 				if (centerRot) {
@@ -1609,44 +1756,68 @@ class WebGPU {
 				if (!this.visible) { return }
 				if (JSON.stringify(this.colour) != JSON.stringify(this.lastColour)) {
 					this.colours = []
-					if (this.shading) {
-						// +X
-						for (let i = 0; i < 4; i++) {
-							this.colours.push(this.colour[0]*0.85, this.colour[1]*0.85, this.colour[2]*0.85, this.colour[3])
-						}
-						// -X
-						for (let i = 0; i < 4; i++) {
-							this.colours.push(this.colour[0]*0.7, this.colour[1]*0.7, this.colour[2]*0.7, this.colour[3])
-						}
-						// +Y
-						for (let i = 0; i < 4; i++) {
-							this.colours.push(this.colour[0]*1, this.colour[1]*1, this.colour[2]*1, this.colour[3])
-						}
-						// -Y
-						for (let i = 0; i < 4; i++) {
-							this.colours.push(this.colour[0]*0.55, this.colour[1]*0.55, this.colour[2]*0.55, this.colour[3])
-						}
-						// +Z
-						for (let i = 0; i < 4; i++) {
-							this.colours.push(this.colour[0]*0.75, this.colour[1]*0.75, this.colour[2]*0.75, this.colour[3])
-						}
-						// -Z
-						for (let i = 0; i < 4; i++) {
-							this.colours.push(this.colour[0]*0.6, this.colour[1]*0.6, this.colour[2]*0.6, this.colour[3])
-						}
-					} else {
-						for (let i = 0; i < 4*6; i++) {
-							this.colours.push(this.colour[0]*1, this.colour[1]*1, this.colour[2]*1, this.colour[3])
-						}
-					}
+                    for (let i = 0; i < 4*6; i++) {
+                        this.colours.push(this.colour[0], this.colour[1], this.colour[2], this.colour[3])
+                    }
 					
 					this.updateBuffers()
 				}
+                this.rotated = this.rot.x != 0 || this.rot.y != 0 || this.rot.z != 0
 				this.lastColour = [...this.colour]
 				super.render(passEncoder)
 			}
 		}
 	}
+
+    get Sphere() {
+        return class extends webgpu.Mesh {
+            radius = 0
+            colour = [0, 0, 0, 1]
+            res = 30
+            constructor(x, y, z, radius, colour, res=30) {
+                super(x, y, z, 1, 1, 1)
+                this.radius = radius
+                this.colour = colour
+                this.res = res
+                this.updateShape()
+            }
+            updateShape() {
+                this.vertices = []
+                this.faces = []
+                this.colours = []
+                this.normals = []
+                for (let lat = 0; lat <= this.res; lat++) {
+                    const theta = (lat * Math.PI) / this.res;
+                    const sinTheta = Math.sin(theta)
+                    const cosTheta = Math.cos(theta)
+
+                    for (let lon = 0; lon <= this.res; lon++) {
+                        const phi = (lon * 2 * Math.PI) / this.res
+                        const sinPhi = Math.sin(phi)
+                        const cosPhi = Math.cos(phi)
+
+                        const x = cosPhi * sinTheta
+                        const y = cosTheta
+                        const z = sinPhi * sinTheta
+
+                        this.vertices.push(this.radius * x, this.radius * y, this.radius * z)
+
+                        this.normals.push(x/this.radius, y/this.radius, -z/this.radius)
+
+                        this.colours.push(this.colour[0], this.colour[1], this.colour[2], this.colour[3])
+                    }
+                }
+                for (let lat = 0; lat < this.res; lat++) {
+                    for (let lon = 0; lon < this.res; lon++) {
+                        const first = lat * (this.res + 1) + lon
+                        const second = first + this.res + 1
+                        this.faces.push(first + 1, second, first, first + 1, second + 1, second)
+                    }
+                }
+                this.updateBuffers()
+            }
+        }
+    }
 }
 
 var webgpu = new WebGPU()

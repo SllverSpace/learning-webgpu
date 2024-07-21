@@ -36,6 +36,22 @@ function getModelMatrix(x, y, z, rotx, roty, rotz, scalex, scaley, scalez) {
     return model
 }
 
+function getNormalMatrix(rotx, roty, rotz, scalex, scaley, scalez) {
+    let model = mat4.create()
+
+    mat4.rotateY(model, model, -roty)
+    mat4.rotateX(model, model, -rotx)
+    mat4.rotateZ(model, model, -rotz)
+
+    mat4.scale(model, model, [scalex, scaley, scalez])
+
+    let normalMatrix = mat4.create()
+    mat4.invert(normalMatrix, model)
+    mat4.transpose(normalMatrix, normalMatrix)
+    
+    return model
+}
+
 webgpu.onReady = () => {requestAnimationFrame(frame)}
 
 webgpu.setup()
@@ -67,12 +83,20 @@ for (let x = 0; x < gridSize; x++) {
             0, 0.5, 0, 1,
             0, 0.5, 0, 1
         )
+        grass.normals.push(
+            0, 1, 0,
+            0, 1, 0,
+            0, 1, 0
+        )
         for (let i = 0; i < 3; i++) grassIds.push((x*gridSize + z) / gridSize / gridSize)
     }
 }
 grass.customBuffers = [[1, grassIds]]
 grass.setShader("grass", grassShaders, grassUniforms, grassVertexConfig, grass.fragmentConfig, grass.pipelineConfig)
 grass.updateBuffers()
+grass.material.ambient = [0.8, 0.8, 0.8]
+grass.material.diffuse = [0.2, 0.2, 0.2]
+grass.material.specular = [0, 0, 0]
 
 
 var test2 = new webgpu.Mesh(-3, 0, 0, 1, 1, 1, [
@@ -85,6 +109,10 @@ var test2 = new webgpu.Mesh(-3, 0, 0, 1, 1, 1, [
     1, 0, 0, 1,
     0, 1, 0, 1,
     0, 0, 1, 1
+],[
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1
 ])
 
 var coolBox = new webgpu.Box(0, 0, -3, 1, 1, 1, [1, 1, 1, 1])
@@ -104,6 +132,11 @@ var ground = new webgpu.Mesh(0, -0.5, 0, 1, 1, 1, [
     0, 0.5, 0, 1,
     0, 0.5, 0, 1,
     0, 0.5, 0, 1
+],[
+    0, 1, 0,
+    0, 1, 0,
+    0, 1, 0,
+    0, 1, 0
 ])
 ground.oneSide = true
 
@@ -115,13 +148,16 @@ ttest2.transparent = true
 ttest3.transparent = true
 
 ttest1.oneSide = false
-// ttest2.oneSide = false
+ttest2.oneSide = false
 ttest3.oneSide = false
+ttest1.setTMat()
+ttest2.setTMat()
+ttest3.setTMat()
 
 ttest1.setTexture(edges)
 ttest1.setUvs()
 
-var houseAlpha = 0.5
+var houseAlpha = 1
 
 var house = [
     new webgpu.Box(7.5, 0.5, 0, 5, 0.1, 5, [0.6, 0.5, 0, houseAlpha]),
@@ -140,6 +176,12 @@ var house = [
 
     new webgpu.Box(4.5, 0, 0, 1, 0.1, 1.5, [0.6, 0.5, 0, houseAlpha]),
 ]
+if (houseAlpha < 1) {
+    for (let mesh of house) {
+        mesh.transparent = true
+        mesh.oneSide = false
+    }
+}
 
 var line = new webgpu.Mesh(-10, 1, -7.5, 1, 1, 1, [], [], [])
 for (let i = 0; i < 20; i++) {
@@ -157,6 +199,11 @@ for (let i = 0; i < 20; i++) {
     c[0] /= 255; c[1] /= 255; c[2] /= 255
     line.colours.push(
         ...c, ...c, ...c, ...c
+    )
+    line.normals.push(
+        -1, 0, 0,
+        -1, 0, 0,
+        -1, 0, 0
     )
 }
 line.transparent = true
@@ -180,17 +227,17 @@ for (let i = 0; i < 50; i++) {
     line2.colours.push(
         ...c, ...c, ...c, ...c
     )
+    line2.normals.push(
+        -1, 0, 0,
+        -1, 0, 0,
+        -1, 0, 0
+    )
 }
 line2.transparent = true
 line2.updateBuffers()
 
-
-if (houseAlpha < 1) {
-    for (let mesh of house) {
-        mesh.transparent = true
-        mesh.oneSide = false
-    }
-}
+line.setTMat()
+line2.setTMat()
 
 house[12].rot.y = Math.PI/2
 house[12].rot.x = -Math.PI/4
@@ -208,8 +255,37 @@ var viewProjection
 var cpuTimes = []
 var gpuTimes = []
 
+var lightPos = {x: 0, y: 0, z: 0}
+
 var fps = 0
 var fps2 = 0
+
+var player = new Player(0, 1, 0)
+
+var lightSphere = new webgpu.Sphere(0, 0, 0, 0.25, [1, 1, 1], 10)
+lightSphere.material.ambient = [1, 1, 1]
+
+let spheres = []
+
+for (let layer = 0; layer < 3; layer++) {
+    for (let sphere = 0; sphere < 5; sphere++) {
+        let angle = Math.PI*2 / 5 * sphere
+
+        let id = layer*5 + sphere
+
+        let c = hslToRgb((id / (3*5)) * 360, 100, 50, 0.5)
+        c[0] /= 255; c[1] /= 255; c[2] /= 255
+
+        let coolSphere = new webgpu.Sphere(-7.5 + Math.sin(angle)*1.1, 1+layer, 5 + Math.cos(angle)*1.1, 0.75, c, 20)
+        coolSphere.transparent = true
+        coolSphere.oneSide = false
+        coolSphere.setTMat()
+        spheres.push(coolSphere)
+    }
+}
+
+var showSpheres = false
+
 
 function frame(timestamp) {
     let start = performance.now()
@@ -224,28 +300,7 @@ function frame(timestamp) {
 
     webgpu.resizeCanvas()
 
-    if (keys["KeyW"]) {
-        vel.x += Math.sin(camera.rot.y)*speed*delta
-        vel.z += Math.cos(camera.rot.y)*speed*delta
-    }
-    if (keys["KeyS"]) {
-        vel.x -= Math.sin(camera.rot.y)*speed*delta
-        vel.z -= Math.cos(camera.rot.y)*speed*delta
-    }
-    if (keys["KeyA"]) {
-        vel.x -= Math.cos(camera.rot.y)*speed*delta
-        vel.z += Math.sin(camera.rot.y)*speed*delta
-    }
-    if (keys["KeyD"]) {
-        vel.x += Math.cos(camera.rot.y)*speed*delta
-        vel.z -= Math.sin(camera.rot.y)*speed*delta
-    }
-    if (keys["Space"]) {
-        vel.y += speed*delta
-    }
-    if (keys["ShiftLeft"]) {
-        vel.y -= speed*delta
-    }
+    player.tick()
 
     if (jKeys["KeyF"]) {
         webgpu.dualDepthPeeling = !webgpu.dualDepthPeeling
@@ -258,13 +313,13 @@ function frame(timestamp) {
         webgpu.depthLayers -= 1
     }
 
-    vel.x = lerp(vel.x, 0, delta*100*0.1)
-    vel.y = lerp(vel.y, 0, delta*100*0.1)
-    vel.z = lerp(vel.z, 0, delta*100*0.1)
+    if (jKeys["KeyR"]) {
+        showSpheres = !showSpheres
+    }
 
-    camera.pos.x += vel.x*delta
-    camera.pos.y += vel.y*delta
-    camera.pos.z += vel.z*delta
+    for (let sphere of spheres) {
+        sphere.visible = showSpheres
+    }
 
     if (mouse.lclick) {
         input.lockMouse()
@@ -274,14 +329,23 @@ function frame(timestamp) {
     
     test2.rot.y = time
 
+    ttest3.rot.y = time
+
+    ttest2.colour[3] = Math.sin(time) / 2 + 0.5
+
+    lightPos = {x: Math.sin(time/2) * 7.5, y: 10, z: Math.cos(time/2) * 7.5}
+    lightSphere.pos = lightPos
+
+    let lightBuffer = new Float32Array([lightPos.x, lightPos.y, lightPos.z, 0, 1, 1, 1])
+    let cameraBuffer = new Float32Array([camera.pos.x, camera.pos.y, camera.pos.z])
+
     webgpu.setGlobalUniform("view", viewProjection[1])
     webgpu.setGlobalUniform("projection", viewProjection[0])
+    webgpu.setGlobalUniform("camera", cameraBuffer)
+    webgpu.setGlobalUniform("light", lightBuffer)
 
     let timeBuffer = new Float32Array([time])
     device.queue.writeBuffer(webgpu.shaders.grass.uniforms.time[0], 0, timeBuffer, 0, timeBuffer.length)
-
-    let cameraBuffer = new Float32Array([camera.pos.x, camera.pos.y, camera.pos.z])
-    device.queue.writeBuffer(webgpu.shaders.grass.uniforms.camera[0], 0, cameraBuffer, 0, cameraBuffer.length)
 
     webgpu.render([0.4, 0.8, 1, 1])
 
@@ -300,7 +364,7 @@ function frame(timestamp) {
     }
     gpuAvg /= webgpu.gpuTimes.length
 
-    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2} \n \n${webgpu.dualDepthPeeling ? "Dual Depth Peeling - Faster on high end devices" : "Depth Peeling - Faster on low to mid range devices"} \nRendering Passes: ${webgpu.renderingDepthLayers} \nMax Depth Layers: ${webgpu.depthLayers * 2} \n \nControls: \nQ/E Change Depth Layers \nF Change Rendering Mode`)
+    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2} \n \n${webgpu.dualDepthPeeling ? "Dual Depth Peeling - Faster on high end devices" : "Depth Peeling - Faster on low to mid range devices"} \nRendering Passes: ${webgpu.renderingDepthLayers} \nMax Depth Layers: ${webgpu.depthLayers * 2} \n \nControls: \nQ/E - Change Depth Layers \nF - Change Rendering Mode \nR - Show/Hide Spheres`)
 
     input.updateInput()
 
