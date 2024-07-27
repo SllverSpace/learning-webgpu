@@ -1,7 +1,7 @@
 
 var grassShaders = `
     struct Light {
-        position: vec3<f32>,
+        dir: vec3<f32>,
         colour: vec3<f32>
     }
 
@@ -23,6 +23,9 @@ var grassShaders = `
     @group(0) @binding(8) var<uniform> material: Material;
     @group(0) @binding(9) var<uniform> camera: vec3<f32>;
     @group(0) @binding(10) var<uniform> time: f32;
+    @group(0) @binding(11) var shadowTexture: texture_depth_2d;
+    @group(0) @binding(12) var<uniform> lightView: mat4x4<f32>;
+    @group(0) @binding(13) var shadowSampler: sampler_comparison;
 
     struct VertexOut {
     @builtin(position) position : vec4f,
@@ -122,7 +125,7 @@ var grassShaders = `
         }
 
         let normal = normalize(fragData.normal);
-        let lightDir = normalize(light.position - fragData.pos);
+        let lightDir = normalize(-light.dir);
         let viewDir = normalize(camera - fragData.pos);
         let reflectDir = reflect(-lightDir, normal);
 
@@ -134,7 +137,47 @@ var grassShaders = `
         let spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
         let specular = material.specular * spec * light.colour;
 
-        let colour = ambient + diffuse + specular;
+        let size = textureDimensions(shadowTexture);
+        let sx = 1.0 / f32(size.x);
+        let sy = 1.0 / f32(size.y);
+
+        let fragPosLightSpace = lightView * vec4f(fragData.pos.x, fragData.pos.y, -fragData.pos.z, 1.0);
+        let fragPos = vec3(
+            fragPosLightSpace.xy * vec2(0.5, -0.5) + vec2(0.5),
+            fragPosLightSpace.z
+        );
+
+        let inRange = (
+            fragPos.x >= 0 &&
+            fragPos.x <= 1 &&
+            fragPos.y >= 0 &&
+            fragPos.y <= 1
+        );
+
+        var vis = 0.0;
+        let bias = -0.0001;
+        let blur = 0.01;
+
+        for (var x = 0; x < 3; x++) {
+            for (var y = 0; y < 3; y++) {
+                let offset = vec2f(f32(x-1)*sx, f32(y-1)*sy);
+                // let depth = textureSample(shadowTexture, uSampler, fragPos.xy+offset);
+                vis += textureSampleCompare(
+                    shadowTexture,
+                    shadowSampler,
+                    fragPos.xy+offset,
+                    fragPos.z + bias,
+                );
+            }
+        }
+
+        var shadow = vis / 9.0;
+        var shadowFactor = 1.0;
+        if inRange {
+            shadowFactor = min((1.0 - shadow) + 0.1, 1.0);
+        }
+
+        let colour = ambient + (diffuse + specular) * shadowFactor;
 
         return vertexColour * vec4f(colour, 1);
     }
@@ -186,4 +229,7 @@ var grassUniforms = {
     material: [null, 8, 16*4, 1, false],
     camera: [null, 9, 3*4, 2, true],
     time: [null, 10, 4, 0, true],
+    shadowTexture: [null, 11, 0, 1, false, true, {texture: {sampleType: "depth"}}],
+    lightView: [null, 12, 16*4, 1, true],
+    shadowSampler: [null, 13, 0, 1, false, true, {sampler: {type: "comparison"}}],
 }

@@ -7,6 +7,9 @@ var fov = 60
 var camera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: 0, z: 0}}
 var vel = {x: 0, y: 0, z: 0}
 
+var shadowCamera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: 0, z: 0}}
+var shadowOptions = {distance: 10, fov: 60, grid: 5, size: 20}
+
 function getViewMatrix() {
     let view = mat4.create()
     let projection = mat4.create()
@@ -62,6 +65,8 @@ var edges = new webgpu.Texture("edges-2.png")
 
 var grid = []
 
+webgpu.createShader("grass", grassShaders, grassUniforms, grassVertexConfig, webgpu.fragmentConfig, webgpu.dPipelineConfig, webgpu.dUGroups)
+
 var gridSize = 300
 let grassSize = 20/gridSize
 var grass = new webgpu.Mesh(-10, -0.5, -10, 1, 1, 1, [], [], [])
@@ -94,8 +99,8 @@ for (let x = 0; x < gridSize; x++) {
 grass.customBuffers = [[1, grassIds]]
 grass.setShader("grass", grassShaders, grassUniforms, grassVertexConfig, grass.fragmentConfig, grass.pipelineConfig)
 grass.updateBuffers()
-grass.material.ambient = [0.8, 0.8, 0.8]
-grass.material.diffuse = [0.2, 0.2, 0.2]
+grass.material.ambient = [0.6, 0.6, 0.6]
+grass.material.diffuse = [0.4, 0.4, 0.4]
 grass.material.specular = [0, 0, 0]
 
 
@@ -139,6 +144,8 @@ var ground = new webgpu.Mesh(0, -0.5, 0, 1, 1, 1, [
     0, 1, 0
 ])
 ground.oneSide = true
+ground.material.diffuse = [0, 0, 0]
+ground.material.ambient = [0.7, 0.7, 0.7]
 
 var ttest1 = new webgpu.Box(-2, 1, 4, 1, 1, 1, [1, 1, 1, 0.5])
 var ttest2 = new webgpu.Box(0, 1, 4, 1, 1, 1, [0, 1, 0, 0.5])
@@ -255,17 +262,22 @@ var viewProjection
 var cpuTimes = []
 var gpuTimes = []
 
-var lightPos = {x: 0, y: 0, z: 0}
+var lightDir = {x: 0.85, y: -1, z: 0.5}
+let lightLength = Math.sqrt(lightDir.x**2 + lightDir.y**2 + lightDir.z**2)
+lightDir = {
+    x: lightDir.x/lightLength,
+    y: lightDir.y/lightLength,
+    z: lightDir.z/lightLength
+}
 
 var fps = 0
 var fps2 = 0
 
 var player = new Player(0, 1, 0)
 
-var lightSphere = new webgpu.Sphere(0, 0, 0, 0.25, [1, 1, 1], 10)
-lightSphere.material.ambient = [1, 1, 1]
-
 let spheres = []
+
+var light = new webgpu.Box(0, 0, 0, 0.5, 0.5, 0.5, [1, 0, 0, 1])
 
 for (let layer = 0; layer < 3; layer++) {
     for (let sphere = 0; sphere < 5; sphere++) {
@@ -333,14 +345,15 @@ function frame(timestamp) {
 
     ttest2.colour[3] = Math.sin(time) / 2 + 0.5
 
-    lightPos = {x: Math.sin(time/2) * 7.5, y: 10, z: Math.cos(time/2) * 7.5}
-    lightSphere.pos = lightPos
+    // lightDir = {
+    //     x: 0.85, 
+    //     y: Math.cos(time/10 + Math.PI/2), 
+    //     z: 0.5*Math.sin(time/10 + Math.PI/2)
+    // }
 
-    let lightBuffer = new Float32Array([lightPos.x, lightPos.y, lightPos.z, 0, 1, 1, 1])
+    let lightBuffer = new Float32Array([lightDir.x, lightDir.y, lightDir.z, 0, 1, 1, 1])
     let cameraBuffer = new Float32Array([camera.pos.x, camera.pos.y, camera.pos.z])
 
-    webgpu.setGlobalUniform("view", viewProjection[1])
-    webgpu.setGlobalUniform("projection", viewProjection[0])
     webgpu.setGlobalUniform("camera", cameraBuffer)
     webgpu.setGlobalUniform("light", lightBuffer)
 
