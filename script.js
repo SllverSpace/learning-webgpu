@@ -4,7 +4,7 @@ utils.setStyles()
 utils.setGlobals()
 
 var fov = 60
-var camera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: 0, z: 0}}
+var camera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: Math.PI/2, z: 0}}
 var vel = {x: 0, y: 0, z: 0}
 
 var shadowCamera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: 0, z: 0}}
@@ -216,7 +216,6 @@ for (let i = 0; i < 20; i++) {
 line.transparent = true
 line.updateBuffers()
 
-
 var line2 = new webgpu.Mesh(-25, 1, -12.5, 1, 1, 1, [], [], [])
 for (let i = 0; i < 50; i++) {
     line2.vertices.push(
@@ -351,15 +350,16 @@ function frame(timestamp) {
     //     z: 0.5*Math.sin(time/10 + Math.PI/2)
     // }
 
-    let lightBuffer = new Float32Array([lightDir.x, lightDir.y, lightDir.z, 0, 1, 1, 1])
-    let cameraBuffer = new Float32Array([camera.pos.x, camera.pos.y, camera.pos.z])
+    webgpu.lightBuffer = new Float32Array([lightDir.x, lightDir.y, lightDir.z, 0, 1, 1, 1, 0])
+    webgpu.cameraBuffer = new Float32Array([camera.pos.x, camera.pos.y, camera.pos.z, 0])
 
-    webgpu.setGlobalUniform("camera", cameraBuffer)
-    webgpu.setGlobalUniform("light", lightBuffer)
+    // let sceneBuffer = new Float32Array([...viewProjection[1], ...viewProjection[0], ...lightBuffer, ...cameraBuffer, ...viewProjection[0]])
+
+    // webgpu.setGlobalUniform("scene", sceneBuffer)
+    // webgpu.setGlobalUniform("light", lightBuffer)
 
     let timeBuffer = new Float32Array([time])
     device.queue.writeBuffer(webgpu.shaders.grass.uniforms.time[0], 0, timeBuffer, 0, timeBuffer.length)
-
     webgpu.render([0.4, 0.8, 1, 1])
 
     cpuTimes.push(performance.now()-start)

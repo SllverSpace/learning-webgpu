@@ -11,21 +11,46 @@ var grassShaders = `
         specular: vec3<f32>,
         shininess: f32,
     }
+
+    struct Scene {
+        view: mat4x4<f32>,
+        projection: mat4x4<f32>,
+        light: Light,
+        camera: vec3<f32>,
+        lightView: mat4x4<f32>
+    }
+
+    struct Obj {
+        model: mat4x4<f32>,
+        normal: mat4x4<f32>,
+        useTexture: u32,
+        material: Material
+    }
+
+    @group(0) @binding(0) var<uniform> uScene: Scene;
+    @group(0) @binding(1) var<uniform> uObj: Obj;
+
+    @group(0) @binding(2) var uTexture: texture_2d<f32>;
+
+    @group(0) @binding(3) var shadowTexture: texture_depth_2d;
+    @group(0) @binding(4) var shadowSampler: sampler_comparison;
+
+    @group(0) @binding(5) var<uniform> time: f32;
     
-    @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
-    @group(0) @binding(1) var<uniform> uProjection: mat4x4<f32>;
-    @group(0) @binding(2) var<uniform> uModel: mat4x4<f32>;
-    @group(0) @binding(3) var<uniform> uNormal: mat4x4<f32>;
-    @group(0) @binding(4) var uSampler: sampler;
-    @group(0) @binding(5) var uTexture: texture_2d<f32>;
-    @group(0) @binding(6) var<uniform> useTexture: u32;
-    @group(0) @binding(7) var<uniform> light: Light;
-    @group(0) @binding(8) var<uniform> material: Material;
-    @group(0) @binding(9) var<uniform> camera: vec3<f32>;
-    @group(0) @binding(10) var<uniform> time: f32;
-    @group(0) @binding(11) var shadowTexture: texture_depth_2d;
-    @group(0) @binding(12) var<uniform> lightView: mat4x4<f32>;
-    @group(0) @binding(13) var shadowSampler: sampler_comparison;
+    // @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
+    // @group(0) @binding(1) var<uniform> uProjection: mat4x4<f32>;
+    // @group(0) @binding(2) var<uniform> uModel: mat4x4<f32>;
+    // @group(0) @binding(3) var<uniform> uNormal: mat4x4<f32>;
+    // @group(0) @binding(4) var uSampler: sampler;
+    // @group(0) @binding(5) var uTexture: texture_2d<f32>;
+    // @group(0) @binding(6) var<uniform> useTexture: u32;
+    // @group(0) @binding(7) var<uniform> light: Light;
+    // @group(0) @binding(8) var<uniform> material: Material;
+    // @group(0) @binding(9) var<uniform> camera: vec3<f32>;
+    // @group(0) @binding(10) var<uniform> time: f32;
+    // @group(0) @binding(11) var shadowTexture: texture_depth_2d;
+    // @group(0) @binding(12) var<uniform> lightView: mat4x4<f32>;
+    // @group(0) @binding(13) var shadowSampler: sampler_comparison;
 
     struct VertexOut {
     @builtin(position) position : vec4f,
@@ -81,7 +106,7 @@ var grassShaders = `
 
         var moved : f32 = 10;
 
-        var d = sqrt(pow((camera.x-pos.x+moved), 2) + pow((camera.y-pos.y+1) / 2, 2) + pow((camera.z-pos.z+moved), 2))/1.5;
+        var d = sqrt(pow((uScene.camera.x-pos.x+moved), 2) + pow((uScene.camera.y-pos.y+1) / 2, 2) + pow((uScene.camera.z-pos.z+moved), 2))/1.5;
         var factor = 1.0-min(1, max(0, d));
 
         // diff.x += hash(vertexIndex)*2-1;
@@ -102,12 +127,12 @@ var grassShaders = `
 
         normal2 = normalize(normal2);
 
-        let translated = uModel * vec4<f32>(pos.xyz, 1.0);
+        let translated = uObj.model * vec4<f32>(pos.xyz, 1.0);
 
         var output : VertexOut;
-        output.position = uProjection * uView * translated;
+        output.position = uScene.projection * uScene.view * translated;
         output.color = color;
-        output.normal = normalize((uNormal * vec4(normal2.x, normal2.y, normal2.z, 0)).xyz);
+        output.normal = normalize((uObj.normal * vec4(normal2.x, normal2.y, normal2.z, 0)).xyz);
         output.normal.z = -output.normal.z;
         output.uv = uv;
         output.pos = vec3<f32>(translated[0], translated[1], -translated[2]);
@@ -120,28 +145,28 @@ var grassShaders = `
     fn fragment_main(fragData: VertexOut) -> @location(0) vec4f
     {
         var vertexColour = fragData.color;
-        if (useTexture != 0u) {
-            vertexColour = textureSample(uTexture, uSampler, fragData.uv) * fragData.color;
+        if (uObj.useTexture != 0u) {
+            vertexColour = textureLoad(uTexture, vec2u((fragData.uv % vec2f(1.0, 1.0)) *vec2f(textureDimensions(uTexture))), 0) * fragData.color;
         }
 
         let normal = normalize(fragData.normal);
-        let lightDir = normalize(-light.dir);
-        let viewDir = normalize(camera - fragData.pos);
+        let lightDir = normalize(-uScene.light.dir);
+        let viewDir = normalize(uScene.camera - fragData.pos);
         let reflectDir = reflect(-lightDir, normal);
 
-        let ambient = light.colour * material.ambient;
+        let ambient = uScene.light.colour * uObj.material.ambient;
 
         let diff = max(dot(normal, lightDir), 0.0);
-        let diffuse = material.diffuse * diff * light.colour;
+        let diffuse = uObj.material.diffuse * diff * uScene.light.colour;
 
-        let spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
-        let specular = material.specular * spec * light.colour;
+        let spec = pow(max(dot(viewDir, reflectDir), 0.0), uObj.material.shininess);
+        let specular = uObj.material.specular * spec * uScene.light.colour;
 
         let size = textureDimensions(shadowTexture);
         let sx = 1.0 / f32(size.x);
         let sy = 1.0 / f32(size.y);
 
-        let fragPosLightSpace = lightView * vec4f(fragData.pos.x, fragData.pos.y, -fragData.pos.z, 1.0);
+        let fragPosLightSpace = uScene.lightView * vec4f(fragData.pos.x, fragData.pos.y, -fragData.pos.z, 1.0);
         let fragPos = vec3(
             fragPosLightSpace.xy * vec2(0.5, -0.5) + vec2(0.5),
             fragPosLightSpace.z
@@ -218,18 +243,10 @@ var grassVertexConfig = {
     ]
 }
 var grassUniforms = {
-    view: [null, 0, 16*4, 0, true],
-    projection: [null, 1, 16*4, 0, true],
-    model: [null, 2, 16*4, 0, false],
-    normal: [null, 3, 16*4, 0, false],
-    sampler: [null, 4, 0, 1, false, true, {sampler: {type: "non-filtering"}}],
-    texture: [null, 5, 0, 1, false, true, {texture: {sampleType: "float"}}],
-    useTexture: [null, 6, 4, 1, false],
-    light: [null, 7, 16*4, 1, true],
-    material: [null, 8, 16*4, 1, false],
-    camera: [null, 9, 3*4, 2, true],
-    time: [null, 10, 4, 0, true],
-    shadowTexture: [null, 11, 0, 1, false, true, {texture: {sampleType: "depth"}}],
-    lightView: [null, 12, 16*4, 1, true],
-    shadowSampler: [null, 13, 0, 1, false, true, {sampler: {type: "comparison"}}],
+    scene: [null, 0, 60*4, 2, true],
+    obj: [null, 1, 49*4, 2, false],
+    texture: [null, 2, 0, 1, false, true, {texture: {sampleType: "float"}}],
+    shadowTexture: [null, 3, 0, 1, false, true, {texture: {sampleType: "depth"}}],
+    shadowSampler: [null, 4, 0, 1, false, true, {sampler: {type: "comparison"}}],
+    time: [null, 5, 4, 0, true],
 }
