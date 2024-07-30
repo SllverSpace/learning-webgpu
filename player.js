@@ -20,6 +20,13 @@ class Player {
         if (this.sprinting) {
             speed *= 2
         }
+
+        let colliding = this.isColliding()
+        if (colliding) {
+            this.fixCollision(colliding, 0.01)
+        }
+
+
         if (keys["KeyW"]) {
             this.vel.x += Math.sin(camera.rot.y)*speed*delta
             this.vel.z += Math.cos(camera.rot.y)*speed*delta
@@ -78,19 +85,14 @@ class Player {
         }
         fov += (tfov - fov) * delta * 7.5
 
-        let prev = this.isColliding()
-
         let dif = (this.tsize - this.size.y) * delta * 10
         this.size.y += dif
         this.pos.y += dif/2
 
-        if (this.isColliding() && !prev && !this.crouching) {
+        if (this.isColliding() && !this.crouching) {
             this.size.y -= dif
             this.pos.y -= dif/2
             this.crouching = true
-        } else if (prev) {
-            this.fixCollision(prev, 0.01)
-            // this.pos.y += delta*2
         }
 
         this.vel.y -= this.gravity*delta
@@ -124,7 +126,7 @@ class Player {
         // }
         this.move(this.vel.x*delta, this.vel.y*delta, this.vel.z*delta, 10)
 
-        console.log(this.vel.y)
+        // console.log(this.vel.y)
 
         this.visual.pos = {...this.pos}
         this.visual.size = {...this.size}

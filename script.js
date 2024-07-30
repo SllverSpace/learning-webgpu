@@ -317,10 +317,18 @@ var spinner = new webgpu.Box(-5, 0, -5, 0.2, 1, 1, [1, 0, 0, 1])
 spinner.push = 1000
 
 var elevators = []
+for (let i = 0; i < 4; i++) {
+    elevators.push(new webgpu.Box(-5, -1, 0, 2, 0.1, 2, [0, 0.5, 1, 0.5]))
+    elevators[i].transparent = true
+}
 
-var elevatorTop = new webgpu.Box(-5, 10, 0, 2.5, 1, 2.5, [0.25, 0.25, 0.25, 1])
+var elevatorTop = new webgpu.Box(-5, 12, 0, 2.5, 1, 2.5, [0.25, 0.25, 0.25, 1])
 
 var winner = new webgpu.Box(0, 100, 10, 5, 0.1, 5, [1, 1, 0, 1])
+
+var players = {}
+
+var sendDT = 0
 
 function frame(timestamp) {
     let start = performance.now()
@@ -331,11 +339,61 @@ function frame(timestamp) {
     ui.getSu()
     input.setGlobals()
 
-    time += delta
+    time = Date.now() / 1000
 
     webgpu.resizeCanvas()
 
     player.tick()
+
+    if (wConnect && !document.hidden) {
+        connectToServer()
+        wConnect = false
+    }
+
+    for (let player in playerData) {
+        if (id != player && !(player in players)) {
+            players[player] = new webgpu.Box(0, 0, 0, 0.5, 1.5, 0.5, [0, 0.5, 1])
+            players[player].lx = 0
+            players[player].ly = 0
+            players[player].lz = 0
+            players[player].langle = 0
+            players[player].lh = 1.5
+            players[player].lastu = time
+        }
+    }
+
+    for (let player in players) {
+        if (id == player || !(player in playerData)) {
+            players[player].delete()
+            delete players[player]
+        } else {
+            // players[player].pos.x += (playerData[player].x - players[player].lx) * delta*10
+            // players[player].pos.y += (playerData[player].y - players[player].ly) * delta*10
+
+            players[player].pos.x = lerp(players[player].lx, playerData[player].x, (time-players[player].lastu)*10)
+            players[player].pos.y = lerp(players[player].ly, playerData[player].y, (time-players[player].lastu)*10)
+            players[player].pos.z = lerp(players[player].lz, playerData[player].z, (time-players[player].lastu)*10)
+            players[player].rot.y = lerp(players[player].langle, playerData[player].angle, (time-players[player].lastu)*10)
+            players[player].size.y = lerp(players[player].lh, playerData[player].h, (time-players[player].lastu)*10)
+
+            // }
+            
+            // if (time - players[player].lastu < 0.1) {
+            //     // players[player].pos.x += (playerData[player].x - players[player].lx) * delta*10
+            //     // players[player].pos.y += (playerData[player].y - players[player].ly) * delta*10
+            //     // players[player].rot.y += (playerData[player].angle - players[player].langle) * delta*10
+            //     // players[player].frame = playerData[player].frames[0]
+            //     // players[player].h += (playerData[player].h - players[player].lh) * delta*10
+            // }
+
+            // for (let key in players[player]) {
+            //     if (isNaN(players[player][key]) && !Array.isArray(players[player][key])) {
+            //         players[player][key] = 0
+            //     }
+            // }
+        }
+    }
+
 
     if (jKeys["KeyF"]) {
         webgpu.dualDepthPeeling = !webgpu.dualDepthPeeling
@@ -360,18 +418,8 @@ function frame(timestamp) {
         input.lockMouse()
     }
 
-    if (elevators.length <= 0 || elevators[elevators.length-1].pos.y > 2) {
-        elevators.push(new webgpu.Box(-5, -1, 0, 2, 0.1, 2, [0, 0.5, 1, 0.5]))
-        elevators[elevators.length-1].transparent = true
-    }
-
     for (let i = 0; i < elevators.length; i++) {
-        elevators[i].pos.y += delta
-        if (elevators[i].pos.y > 10) {
-            elevators[i].delete()
-            elevators.splice(i, 1)
-            i--
-        }
+        elevators[i].pos.y = (i * 3 + time) % 12
     }
 
     viewProjection = getViewMatrix()
@@ -431,6 +479,11 @@ function frame(timestamp) {
     ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2} \n \n${webgpu.dualDepthPeeling ? "Dual Depth Peeling - Faster on high end devices" : "Depth Peeling - Faster on low to mid range devices"} \nRendering Passes: ${webgpu.renderingDepthLayers} \nMax Depth Layers: ${webgpu.depthLayers * 2} \n \nControls: \nR/T - Change Depth Layers \nF - Change Rendering Mode \nV - Show/Hide Spheres`)
 
     input.updateInput()
+
+    if (Math.floor(new Date().getTime()/100) > sendDT) {
+        sendDT = Math.floor(new Date().getTime()/100)
+        sendData()
+    }
 
     requestAnimationFrame(frame)
 }
