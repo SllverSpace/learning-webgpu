@@ -4,7 +4,7 @@ utils.setStyles()
 utils.setGlobals()
 
 var fov = 60
-var camera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: Math.PI/2, z: 0}}
+var camera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: 0, z: 0}}
 var vel = {x: 0, y: 0, z: 0}
 
 var shadowCamera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: 0, z: 0}}
@@ -67,6 +67,8 @@ var grid = []
 
 webgpu.createShader("grass", grassShaders, grassUniforms, grassVertexConfig, webgpu.fragmentConfig, webgpu.dPipelineConfig, webgpu.dUGroups)
 
+var grasses = []
+
 var gridSize = 300
 let grassSize = 20/gridSize
 var grass = new webgpu.Mesh(-10, -0.5, -10, 1, 1, 1, [], [], [])
@@ -74,9 +76,9 @@ var grassIds = []
 for (let x = 0; x < gridSize; x++) {
     for (let z = 0; z < gridSize; z++) {
         grass.vertices.push(
-            x*grassSize, 7.5*grassSize, z*grassSize,
-            0*grassSize + x*grassSize, 0, z*grassSize,
-            0*grassSize + x*grassSize, 0, z*grassSize
+            x*grassSize, 0.5, z*grassSize,
+            x*grassSize, 0, z*grassSize,
+            x*grassSize, 0, z*grassSize
         )
         grass.faces.push(
             grass.vertices.length/3-3,
@@ -124,25 +126,26 @@ var coolBox = new webgpu.Box(0, 0, -3, 1, 1, 1, [1, 1, 1, 1])
 coolBox.setTexture(coolCube)
 coolBox.setUvs()
 
-var ground = new webgpu.Mesh(0, -0.5, 0, 1, 1, 1, [
-    -10, 0, -10,
-    10, 0, 10,
-    -10, 0, 10,
-    10, 0, -10
-],[
-    0, 3, 1,
-    0, 1, 2
-],[
-    0, 0.5, 0, 1,
-    0, 0.5, 0, 1,
-    0, 0.5, 0, 1,
-    0, 0.5, 0, 1
-],[
-    0, 1, 0,
-    0, 1, 0,
-    0, 1, 0,
-    0, 1, 0
-])
+// var ground = new webgpu.Mesh(0, -0.5, 0, 1, 1, 1, [
+//     -10, 0, -10,
+//     10, 0, 10,
+//     -10, 0, 10,
+//     10, 0, -10
+// ],[
+//     0, 3, 1,
+//     0, 1, 2
+// ],[
+//     0, 0.5, 0, 1,
+//     0, 0.5, 0, 1,
+//     0, 0.5, 0, 1,
+//     0, 0.5, 0, 1
+// ],[
+//     0, 1, 0,
+//     0, 1, 0,
+//     0, 1, 0,
+//     0, 1, 0
+// ])
+var ground = new webgpu.Box(0, -10 - 0.4, 0, 20, 20, 20, [0, 0.5, 0, 1])
 ground.oneSide = true
 ground.material.diffuse = [0, 0, 0]
 ground.material.ambient = [0.7, 0.7, 0.7]
@@ -163,6 +166,11 @@ ttest3.setTMat()
 
 ttest1.setTexture(edges)
 ttest1.setUvs()
+
+var step = new webgpu.Box(3, 0, 3, 1, 1, 1, [0, 0, 1, 0.5])
+step.transparent = true
+step.oneSide = false
+step.setTMat()
 
 var houseAlpha = 1
 
@@ -272,11 +280,13 @@ lightDir = {
 var fps = 0
 var fps2 = 0
 
-var player = new Player(0, 1, 0)
+var player = new Player(0, 0.5, 0)
 
 let spheres = []
 
 var light = new webgpu.Box(0, 0, 0, 0.5, 0.5, 0.5, [1, 0, 0, 1])
+light.collisions = false
+light.castShadows = false
 
 for (let layer = 0; layer < 3; layer++) {
     for (let sphere = 0; sphere < 5; sphere++) {
@@ -297,6 +307,20 @@ for (let layer = 0; layer < 3; layer++) {
 
 var showSpheres = false
 
+var cornerMeshes = []
+for (let i = 0; i < 8; i++) {
+    cornerMeshes.push(new webgpu.Box(0, 0, 0, 0.1, 0.1, 0.1, [1, 0, 0, 1]))
+    cornerMeshes[i].collisions = false
+}
+
+var spinner = new webgpu.Box(-5, 0, -5, 0.2, 1, 1, [1, 0, 0, 1])
+spinner.push = 1000
+
+var elevators = []
+
+var elevatorTop = new webgpu.Box(-5, 10, 0, 2.5, 1, 2.5, [0.25, 0.25, 0.25, 1])
+
+var winner = new webgpu.Box(0, 100, 10, 5, 0.1, 5, [1, 1, 0, 1])
 
 function frame(timestamp) {
     let start = performance.now()
@@ -317,14 +341,14 @@ function frame(timestamp) {
         webgpu.dualDepthPeeling = !webgpu.dualDepthPeeling
     }
 
-    if (jKeys["KeyE"]) {
-        webgpu.depthLayers += 1
-    }
-    if (jKeys["KeyQ"]) {
+    if (jKeys["KeyR"]) {
         webgpu.depthLayers -= 1
     }
+    if (jKeys["KeyT"]) {
+        webgpu.depthLayers += 1
+    }
 
-    if (jKeys["KeyR"]) {
+    if (jKeys["KeyV"]) {
         showSpheres = !showSpheres
     }
 
@@ -336,13 +360,35 @@ function frame(timestamp) {
         input.lockMouse()
     }
 
+    if (elevators.length <= 0 || elevators[elevators.length-1].pos.y > 2) {
+        elevators.push(new webgpu.Box(-5, -1, 0, 2, 0.1, 2, [0, 0.5, 1, 0.5]))
+        elevators[elevators.length-1].transparent = true
+    }
+
+    for (let i = 0; i < elevators.length; i++) {
+        elevators[i].pos.y += delta
+        if (elevators[i].pos.y > 10) {
+            elevators[i].delete()
+            elevators.splice(i, 1)
+            i--
+        }
+    }
+
     viewProjection = getViewMatrix()
     
     test2.rot.y = time
 
+    ttest3.rot.x = time
     ttest3.rot.y = time
+    ttest3.rot.z = time
+
+    spinner.rot.z = time*100
 
     ttest2.colour[3] = Math.sin(time) / 2 + 0.5
+
+    let c = hslToRgb(((time/10)%1) * 360, 100, 50, 0.5)
+    c[0] /= 255; c[1] /= 255; c[2] /= 255
+    step.colour = c
 
     // lightDir = {
     //     x: 0.85, 
@@ -357,6 +403,11 @@ function frame(timestamp) {
 
     // webgpu.setGlobalUniform("scene", sceneBuffer)
     // webgpu.setGlobalUniform("light", lightBuffer)
+
+    let corners = ttest3.getCorners()
+    for (let i = 0; i < 8; i++) {
+        cornerMeshes[i].pos = {x: corners[i][0], y: corners[i][1], z: corners[i][2]}
+    }
 
     let timeBuffer = new Float32Array([time])
     device.queue.writeBuffer(webgpu.shaders.grass.uniforms.time[0], 0, timeBuffer, 0, timeBuffer.length)
@@ -377,7 +428,7 @@ function frame(timestamp) {
     }
     gpuAvg /= webgpu.gpuTimes.length
 
-    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2} \n \n${webgpu.dualDepthPeeling ? "Dual Depth Peeling - Faster on high end devices" : "Depth Peeling - Faster on low to mid range devices"} \nRendering Passes: ${webgpu.renderingDepthLayers} \nMax Depth Layers: ${webgpu.depthLayers * 2} \n \nControls: \nQ/E - Change Depth Layers \nF - Change Rendering Mode \nR - Show/Hide Spheres`)
+    ui.text(10*su, 15*su, 20*su, `${Math.round(cpuAvg*10)/10}ms CPU (${Math.round(1000/cpuAvg)} FPS) \nAnimation FPS: ${fps2} \n \n${webgpu.dualDepthPeeling ? "Dual Depth Peeling - Faster on high end devices" : "Depth Peeling - Faster on low to mid range devices"} \nRendering Passes: ${webgpu.renderingDepthLayers} \nMax Depth Layers: ${webgpu.depthLayers * 2} \n \nControls: \nR/T - Change Depth Layers \nF - Change Rendering Mode \nV - Show/Hide Spheres`)
 
     input.updateInput()
 

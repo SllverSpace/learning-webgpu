@@ -1299,7 +1299,7 @@ class WebGPU {
         light.rot = {...shadowCamera.rot}
         var shadowViewProjection = this.getViewMatrix(shadowCamera, shadowOptions.fov)
         // left, right, bottom, top, near, far
-        let shadowProjection = mat4.ortho(mat4.create(), -shadowOptions.size, shadowOptions.size, -shadowOptions.size, shadowOptions.size, -shadowOptions.size*4, shadowOptions.size*4)
+        let shadowProjection = mat4.ortho(mat4.create(), -shadowOptions.size, shadowOptions.size, -shadowOptions.size, shadowOptions.size, -shadowOptions.size*10, shadowOptions.size*4)
         // let shadowProjection = shadowViewProjection[0]
 
         var renderPassDescriptor = {
@@ -1333,10 +1333,12 @@ class WebGPU {
         var shadowEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
 
         for (let mesh of solid) {
+            if (!mesh.castShadows) continue
             mesh.render(shadowEncoder)
         }
 
         for (let mesh of transparent) {
+            if (!mesh.castShadows) continue
             let shader = mesh.shaderName
             mesh.setShader("default")
             mesh.render(shadowEncoder)
@@ -1795,7 +1797,9 @@ class WebGPU {
     get Mesh() {
         return class {
             group = 0
+            push = 0
             uniformsB = {}
+            collisions = true
             oneSide = false
             texture = null
             useTexture = false
@@ -1806,6 +1810,7 @@ class WebGPU {
             bindGroups = {}
             updateModel = true
             visible = true
+            castShadows = true
             model
             material = {
                 ambient: [0.5, 0.5, 0.5],
@@ -1831,7 +1836,7 @@ class WebGPU {
                 webgpu.meshes.push(this)
                 if (webgpu.ready) {
                     webgpu.createShader(this.shaderName, this.shaders, this.uniforms, this.vertexConfig, this.fragmentConfig, this.pipelineConfig)
-                    this.createBindGroup(webgpu.shaders[this.shaderName].bindGroupLayout, [webgpu.dTexture, webgpu.shadowTexture.createView(), webgpu.shadowSampler])
+                    this.createBindGroup(webgpu.shaders[this.shaderName].bindGroupLayout, [webgpu.dTexture.createView(), webgpu.shadowTexture.createView(), webgpu.shadowSampler])
                     this.updateBuffers()
                 }
             }
@@ -2109,6 +2114,12 @@ class WebGPU {
 				]
                 this.updateBuffers()
 			}
+            getCorners() {
+                return collisions.getBoxCorners(this.pos.x, this.pos.y, this.pos.z, this.size.x, this.size.y, this.size.z, this.rot.x, this.rot.y, this.rot.z)
+            }
+            getAxes() {
+                return collisions.getBoxAxes(this.rot.x, this.rot.y, this.rot.z)
+            }
 			render(passEncoder) {
 				if (!this.visible) { return }
 				if (JSON.stringify(this.colour) != JSON.stringify(this.lastColour)) {
@@ -2132,7 +2143,8 @@ class WebGPU {
             colour = [0, 0, 0, 1]
             res = 30
             constructor(x, y, z, radius, colour, res=30) {
-                super(x, y, z, 1, 1, 1)
+                super(x, y, z, radius, radius, radius)
+                this.isSphere = true
                 this.radius = radius
                 this.colour = colour
                 this.res = res
@@ -2157,9 +2169,9 @@ class WebGPU {
                         const y = cosTheta
                         const z = sinPhi * sinTheta
 
-                        this.vertices.push(this.radius * x, this.radius * y, this.radius * z)
+                        this.vertices.push(1 * x, 1 * y, 1 * z)
 
-                        this.normals.push(x/this.radius, y/this.radius, -z/this.radius)
+                        this.normals.push(x/1, y/1, -z/1)
 
                         this.colours.push(this.colour[0], this.colour[1], this.colour[2], this.colour[3])
                     }
@@ -2172,6 +2184,22 @@ class WebGPU {
                     }
                 }
                 this.updateBuffers()
+            }
+            getAxes() {
+                return [
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    [0, 0, 1],
+                    // [1, 0, 0],
+                    // [0, 1, 0],
+                    // [0, 0, 1]
+                ]
+            }
+            render(passEncoder) {
+                this.size.x = this.radius
+                this.size.y = this.radius
+                this.size.z = this.radius
+                super.render(passEncoder)
             }
         }
     }

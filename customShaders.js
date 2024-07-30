@@ -72,22 +72,27 @@ var grassShaders = `
     fn vertex_main(@builtin(vertex_index) vertexIndex: u32, @location(0) position: vec4f,
                 @location(1) color: vec4f, @location(2) normal: vec3f, @location(3) uv: vec2f, @location(4) id: f32) -> VertexOut
     {  
+        let offpos = uObj.model * vec4<f32>(0, 0, 0, 1);
+
         var normal2 = normal;
         var gridSize : f32 = 300;
         var size : f32 = 20 / gridSize;
 
+        var height = position.y;
         var pos : vec4<f32> = position;
         var id2 = round(id * gridSize * gridSize);
-        var x = round(id2 / gridSize - 0.5);
-        var y = id2 % gridSize;
+        // var x = round(id2 / gridSize - 0.5);
+        // var y = id2 % gridSize;
+        var x = (position.x+offpos.x)*15;
+        var y = (position.z-offpos.z)*15;
 
         let topIndex = u32(floor(f32(vertexIndex/3)));
         var top = vertexIndex % 3 == 0;
 
         var off : vec2<f32> = vec2(0, 0);
 
-        pos.x += (hash(u32(id2))*2-1) / 5;
-        pos.z += (hash(u32(id2 + 94823))*2-1) / 5;
+        pos.x += (hash(u32(id2)*2-1)) / 5;
+        pos.z += (hash(u32(id2)+494823)*2-1) / 5;
 
         off.x += (hash(vertexIndex)*2-1) * size*1.5;
         off.y += (hash(vertexIndex+493045)*2-1) * size*1.5;
@@ -106,8 +111,9 @@ var grassShaders = `
 
         var moved : f32 = 10;
 
-        var d = sqrt(pow((uScene.camera.x-pos.x+moved), 2) + pow((uScene.camera.y-pos.y+1) / 2, 2) + pow((uScene.camera.z-pos.z+moved), 2))/1.5;
-        var factor = 1.0-min(1, max(0, d));
+        var d = sqrt(pow((uScene.camera.x-position.x-offpos.x), 2) + pow((uScene.camera.y-position.y) / 2, 2) + pow((uScene.camera.z-position.z+offpos.z), 2))/1.5;
+        // var d = 0.0;
+        var factor = 1-min(1, max(0, d));
 
         // diff.x += hash(vertexIndex)*2-1;
         // diff.y += hash(vertexIndex+493045)*2-1;
@@ -117,13 +123,13 @@ var grassShaders = `
         if (top) {
             pos.x += (off.x) * (factor*3);
             pos.z += (off.y) * (factor*3);
-            pos.y -= factor/2 * size * 7.5 * 2;
+            pos.y -= factor/2 * 0.75;
         } else {
             pos.x += off.x;
             pos.z += off.y;
         }
 
-        normal2.y += factor*50;
+        normal2.y += (1-factor)*1;
 
         normal2 = normalize(normal2);
 
