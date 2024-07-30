@@ -17,7 +17,8 @@ var grassShaders = `
         projection: mat4x4<f32>,
         light: Light,
         camera: vec3<f32>,
-        lightView: mat4x4<f32>
+        lightView: mat4x4<f32>,
+        bias: f32
     }
 
     struct Obj {
@@ -249,7 +250,7 @@ var grassVertexConfig = {
     ]
 }
 var grassUniforms = {
-    scene: [null, 0, 60*4, 2, true],
+    scene: [null, 0, 64*4, 2, true],
     obj: [null, 1, 49*4, 2, false],
     texture: [null, 2, 0, 1, false, true, {texture: {sampleType: "float"}}],
     shadowTexture: [null, 3, 0, 1, false, true, {texture: {sampleType: "depth"}}],

@@ -322,7 +322,7 @@ for (let i = 0; i < 4; i++) {
     elevators[i].transparent = true
 }
 
-var elevatorTop = new webgpu.Box(-5, 12, 0, 2.5, 1, 2.5, [0.25, 0.25, 0.25, 1])
+var elevatorTop = new webgpu.Box(-5, 11, 0, 2.5, 1, 2.5, [0.25, 0.25, 0.25, 1])
 
 var winner = new webgpu.Box(0, 100, 10, 5, 0.1, 5, [1, 1, 0, 1])
 
@@ -419,7 +419,7 @@ function frame(timestamp) {
     }
 
     for (let i = 0; i < elevators.length; i++) {
-        elevators[i].pos.y = (i * 3 + time) % 12
+        elevators[i].pos.y = ((i * 3 + time) % 12) - 1
     }
 
     viewProjection = getViewMatrix()

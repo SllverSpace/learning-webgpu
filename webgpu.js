@@ -66,7 +66,8 @@ class WebGPU {
             projection: mat4x4<f32>,
             light: Light,
             camera: vec3<f32>,
-            lightView: mat4x4<f32>
+            lightView: mat4x4<f32>,
+            bias: f32
         }
 
         struct Obj {
@@ -165,7 +166,6 @@ class WebGPU {
             );
 
             var vis = 0.0;
-            let bias = -0.001;
             let blur = 0.01;
 
             for (var x = 0; x < 3; x++) {
@@ -176,7 +176,7 @@ class WebGPU {
                         shadowTexture,
                         shadowSampler,
                         fragPos.xy+offset,
-                        fragPos.z + bias,
+                        fragPos.z + uScene.bias,
                     );
                 }
             }
@@ -195,7 +195,7 @@ class WebGPU {
     `
     dShaderName = "default"
     dUniforms = {
-        scene: [null, 0, 60*4, 2, true],
+        scene: [null, 0, 64*4, 2, true],
         obj: [null, 1, 49*4, 2, false],
         texture: [null, 2, 0, 1, false, true, {texture: {sampleType: "float"}}],
         shadowTexture: [null, 3, 0, 1, false, true, {texture: {sampleType: "depth"}}],
@@ -266,7 +266,8 @@ class WebGPU {
             projection: mat4x4<f32>,
             light: Light,
             camera: vec3<f32>,
-            lightView: mat4x4<f32>
+            lightView: mat4x4<f32>,
+            bias: f32,
         }
 
         struct Obj {
@@ -347,7 +348,7 @@ class WebGPU {
         let color = vertexColour * vec4f(colour, 1);
     `
     tUniforms = {
-        scene: [null, 0, 60*4, 2, true],
+        scene: [null, 0, 64*4, 2, true],
         obj: [null, 1, 49*4, 2, false],
         texture: [null, 2, 0, 1, false, true, {texture: {sampleType: "float"}}],
         shadowTexture: [null, 3, 0, 1, false, true, {texture: {sampleType: "depth"}}],
@@ -546,6 +547,7 @@ class WebGPU {
     depthLayers = 5
     renderScale = 1
     shadowSize = 2048
+    bias = -0.0005
     group = 0
     occlusionSupported = false
     occlusions = []
@@ -1324,7 +1326,7 @@ class WebGPU {
 
         let shadowView2 = mat4.multiply(mat4.create(), shadowProjection, shadowViewProjection[1])
 
-        let sceneBuffer = new Float32Array([...shadowViewProjection[1], ...shadowProjection, ...this.lightBuffer, ...this.cameraBuffer, ...shadowView2])
+        let sceneBuffer = new Float32Array([...shadowViewProjection[1], ...shadowProjection, ...this.lightBuffer, ...this.cameraBuffer, ...shadowView2, this.bias])
 
         // this.setGlobalUniform("view", shadowViewProjection[1])
         // this.setGlobalUniform("projection", shadowProjection)
@@ -1360,7 +1362,7 @@ class WebGPU {
 
         this.setGroup(this.meshes, 0)
 
-        sceneBuffer = new Float32Array([...(fromLight ? shadowViewProjection[1] : viewProjection[1]), ...(fromLight ? shadowProjection : viewProjection[0]), ...this.lightBuffer, ...this.cameraBuffer, ...shadowView2])
+        sceneBuffer = new Float32Array([...(fromLight ? shadowViewProjection[1] : viewProjection[1]), ...(fromLight ? shadowProjection : viewProjection[0]), ...this.lightBuffer, ...this.cameraBuffer, ...shadowView2, this.bias])
 
         this.setGlobalUniform("scene", sceneBuffer)
 
