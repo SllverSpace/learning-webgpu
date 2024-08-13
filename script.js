@@ -335,9 +335,10 @@ var sendDT = 0
 var lights = []
 
 webgpu.lights.push({pos: [7.5, 2, 0], colour: [0, 0, 1], range: 3})
-webgpu.lights.push({pos: [7.5, 2, 5], colour: [2, 0, 0], range: 5})
+webgpu.lights.push({pos: [7.5, 1.5, -7], colour: [3, 0, 0], range: 3})
 lights.push(new webgpu.Sphere(7.5, 2, 0, 0.2, [1, 1, 1], 10))
-lights.push(new webgpu.Sphere(7.5, 2, 5, 0.2, [1, 1, 1], 10))
+lights.push(new webgpu.Sphere(7.5, 2, 0, 0.2, [1, 1, 1], 10))
+// lights.push(new webgpu.Sphere(7.5, 2, 5, 0.2, [1, 1, 1], 10))
 
 function frame(timestamp) {
     let start = performance.now()
@@ -442,6 +443,21 @@ function frame(timestamp) {
     spinner.rot.z = time*100
 
     ttest2.colour[3] = Math.sin(time) / 2 + 0.5
+
+    // webgpu.lights[0].pos[2] = Math.sin(time)
+    // webgpu.lights[0].pos[0] = 7.5+Math.cos(time)
+
+    let c2 = hslToRgb(((time)%1) * 360, 100, 50, 0.5)
+    c2[0] /= 255; c2[1] /= 255; c2[2] /= 255
+
+    webgpu.lights[0].colour = [c2[0], c2[1], c2[2]]
+
+    webgpu.lights[1].pos[0] = Math.sin(time/5)*10
+    webgpu.updateLights = true
+
+    for (let i in webgpu.lights) {
+        lights[i].pos = {x: webgpu.lights[i].pos[0], y: webgpu.lights[i].pos[1], z: webgpu.lights[i].pos[2]}
+    }
 
     let c = hslToRgb(((time/10)%1) * 360, 100, 50, 0.5)
     c[0] /= 255; c[1] /= 255; c[2] /= 255
