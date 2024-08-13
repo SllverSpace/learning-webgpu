@@ -1064,9 +1064,22 @@ class WebGPU {
         mat4.perspective(projection, fov * Math.PI / 180, gpucanvas.width / gpucanvas.height, near, far)
 
         mat4.translate(view, view, [camera.pos.x, camera.pos.y, -camera.pos.z])
-        mat4.rotateY(view, view, -camera.rot.y)
-        mat4.rotateX(view, view, -camera.rot.x)
-        mat4.rotateZ(view, view, -camera.rot.z)
+
+        if (camera.useQuat) {
+            let rotate = mat4.fromQuat(mat4.create(), camera.quat)
+            mat4.multiply(view, view, rotate)
+        } else {
+            mat4.rotateY(view, view, -camera.rot.y)
+            mat4.rotateX(view, view, -camera.rot.x)
+            mat4.rotateZ(view, view, -camera.rot.z)
+        }
+       
+       
+      
+
+        // mat4.rotateZ(view, view, -camera.rot.w)
+      
+       
         mat4.invert(view, view)
 
         return [projection, view]
@@ -1936,6 +1949,8 @@ class WebGPU {
                 this.pos = {x: x, y: y, z: z}
                 this.size = {x: width, y: height, z: depth}
                 this.rot = {x: 0, y: 0, z: 0}
+                this.quat = [0, 0, 0, 1]
+                this.useQuat = false
                 this.vertices = vertices
                 this.colours = colours
                 this.faces = faces
@@ -1952,6 +1967,55 @@ class WebGPU {
                     webgpu.createShader(this.shaderName, this.shaders, this.uniforms, this.vertexConfig, this.fragmentConfig, this.pipelineConfig)
                     this.createBindGroup(webgpu.shaders[this.shaderName].bindGroupLayout, [webgpu.dTexture.createView(), webgpu.shadowTexture.createView(), webgpu.shadowSampler])
                     this.updateBuffers()
+                }
+            }
+            getFaceNormal(a, b, c) {
+                let ab = {
+                    x: b.x - a.x,
+                    y: b.y - a.y,
+                    z: b.z - a.z
+                }
+
+                let ac = {
+                    x: c.x - a.x,
+                    y: c.y - a.y,
+                    z: c.z - a.z
+                }
+
+                let normal = {
+                    x: ab.y * ac.z - ab.z * ac.y,
+                    y: ab.z * ac.x - ab.x * ac.z,
+                    z: ab.x * ac.y - ab.y * ac.x
+                }
+
+                let length = Math.sqrt(normal.x**2 + normal.y**2 + normal.z**2)
+
+                return [-normal.x/length, -normal.y/length, normal.z/length]
+            }
+            computeNormals() {
+                this.normals = []
+                let totals = []
+                for (let i = 0; i < this.faces.length/3; i++) {
+                    let ai = this.faces[i*3]
+                    let bi = this.faces[i*3+1]
+                    let ci = this.faces[i*3+2]
+                    let a = vec3(this.vertices[ai*3], this.vertices[ai*3+1], this.vertices[ai*3+2])
+                    let b = vec3(this.vertices[bi*3], this.vertices[bi*3+1], this.vertices[bi*3+2])
+                    let c = vec3(this.vertices[ci*3], this.vertices[ci*3+1], this.vertices[ci*3+2])
+                    
+                    let normal = this.getFaceNormal(a, b, c)
+                    this.normals[ai*3] = (this.normals[ai*3] ? this.normals[ai*3] : 0) + normal[0]; this.normals[ai*3+1] = (this.normals[ai*3+1] ? this.normals[ai*3+1] : 0) + normal[1]; this.normals[ai*3+2] = (this.normals[ai*3+2] ? this.normals[ai*3+2] : 0) + normal[2]
+                    this.normals[bi*3] = (this.normals[bi*3] ? this.normals[bi*3] : 0) + normal[0]; this.normals[bi*3+1] = (this.normals[bi*3+1] ? this.normals[bi*3+1] : 0) + normal[1]; this.normals[bi*3+2] = (this.normals[bi*3+2] ? this.normals[bi*3+2] : 0) + normal[2]
+                    this.normals[ci*3] = (this.normals[ci*3] ? this.normals[ci*3] : 0) + normal[0]; this.normals[ci*3+1] = (this.normals[ci*3+1] ? this.normals[ci*3+1] : 0) + normal[1]; this.normals[ci*3+2] = (this.normals[ci*3+2] ? this.normals[ci*3+2] : 0) + normal[2]
+                    totals[ai] = (totals[ai] ? totals[ai] : 0) + 1
+                    totals[bi] = (totals[bi] ? totals[bi] : 0) + 1
+                    totals[ci] = (totals[ci] ? totals[ci] : 0) + 1
+                    // this.normals.push(...this.getFaceNormal(a, b, c))
+                }
+                for (let i = 0; i < totals.length; i++) {
+                    this.normals[i*3] /= totals[i]
+                    this.normals[i*3+1] /= totals[i]
+                    this.normals[i*3+2] /= totals[i]
                 }
             }
             setTMat() {
@@ -2082,8 +2146,13 @@ class WebGPU {
                 passEncoder.setIndexBuffer(this.indexBuffer, "uint32")
 
                 if (this.updateModel) {
-                    this.model = getModelMatrix(this.pos.x, this.pos.y, this.pos.z, this.rot.x, this.rot.y, this.rot.z, this.size.x, this.size.y, this.size.z)
-                    this.normalMat = getNormalMatrix(this.rot.x, this.rot.y, this.rot.z, this.size.x, this.size.y, this.size.z)
+                    if (this.useQuat) {
+                        this.model = getModelMatrixQ(this.pos.x, this.pos.y, this.pos.z, this.quat, this.size.x, this.size.y, this.size.z, this.rot.w)
+                        this.normalMat = getNormalMatrixQ(this.quat, this.size.x, this.size.y, this.size.z)
+                    } else {
+                        this.model = getModelMatrix(this.pos.x, this.pos.y, this.pos.z, this.rot.x, this.rot.y, this.rot.z, this.size.x, this.size.y, this.size.z, this.rot.w)
+                        this.normalMat = getNormalMatrix(this.rot.x, this.rot.y, this.rot.z, this.size.x, this.size.y, this.size.z)
+                    }
                 }
                 let modelMatrix = this.model
                 let normalMatrix = this.normalMat

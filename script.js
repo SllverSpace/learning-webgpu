@@ -4,7 +4,7 @@ utils.setStyles()
 utils.setGlobals()
 
 var fov = 60
-var camera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: 0, z: 0}}
+var camera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: 0, z: 0}, quat: [0, 0, 0, 1], useQuat: false}
 var vel = {x: 0, y: 0, z: 0}
 
 var shadowCamera = {pos: {x: 0, y: 1, z: 0}, rot: {x: 0, y: 0, z: 0}}
@@ -39,6 +39,36 @@ function getModelMatrix(x, y, z, rotx, roty, rotz, scalex, scaley, scalez) {
     return model
 }
 
+function nVec(vec) {
+    let length = 0
+    for (let value of vec) {
+        length += value**2
+    }
+    length = Math.sqrt(length)
+    if (length > 0) {
+        for (let i in vec) {
+            vec[i] /= length
+        }
+    } else {
+        vec[0] = 1
+    }
+    
+    return vec
+}
+
+function getModelMatrixQ(x, y, z, quat, sx, sy, sz) {
+    let model = mat4.create()
+
+    // let result = quat.create()
+
+    // quat.multiply(result, [rx, ry, rz, rw], [-rx, -ry, -rz, rw])
+
+    mat4.fromRotationTranslation(model, nVec(quat), [x, y, -z])
+    mat4.scale(model, model, [sx, sy, -sz])
+
+    return model
+}
+
 function getNormalMatrix(rotx, roty, rotz, scalex, scaley, scalez) {
     let model = mat4.create()
 
@@ -52,6 +82,20 @@ function getNormalMatrix(rotx, roty, rotz, scalex, scaley, scalez) {
     mat4.invert(normalMatrix, model)
     mat4.transpose(normalMatrix, normalMatrix)
     
+    return model
+}
+
+function getNormalMatrixQ(quat, sx, sy, sz) {
+    let model = mat4.create()
+
+    mat4.fromQuat(model, quat)
+
+    mat4.scale(model, model, [sx, sy, sz])
+
+    let normalMatrix = mat4.create()
+    mat4.invert(normalMatrix, model)
+    mat4.transpose(normalMatrix, normalMatrix)
+
     return model
 }
 
@@ -336,8 +380,13 @@ var lights = []
 
 webgpu.lights.push({pos: [7.5, 2, 0], colour: [0, 0, 1], range: 3})
 webgpu.lights.push({pos: [7.5, 1.5, -7], colour: [3, 0, 0], range: 3})
-lights.push(new webgpu.Sphere(7.5, 2, 0, 0.2, [1, 1, 1], 10))
-lights.push(new webgpu.Sphere(7.5, 2, 0, 0.2, [1, 1, 1], 10))
+
+for (let i = 0; i < 2; i++) {
+    let sphere = new webgpu.Sphere(7.5, 2, 0, 0.2, [1, 1, 1], 10)
+    sphere.material.ambient = [0, 0, 0]
+    sphere.material.diffuse = [0, 0, 0]
+    lights.push(sphere)
+}
 // lights.push(new webgpu.Sphere(7.5, 2, 5, 0.2, [1, 1, 1], 10))
 
 function frame(timestamp) {
