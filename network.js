@@ -89,6 +89,11 @@ function connectToServer() {
 
     ws.addEventListener("close", (event) => {
         console.log("Disconnected")
+        for (let player in players) {
+            players[player].delete()
+        }
+        players = {}
+        playerData = {}
         wConnect = true
     })
 }

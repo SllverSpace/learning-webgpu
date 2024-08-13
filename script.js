@@ -145,11 +145,10 @@ coolBox.setUvs()
 //     0, 1, 0,
 //     0, 1, 0
 // ])
-var ground = new webgpu.Box(0, -10 - 0.4, 0, 20, 20, 20, [0, 0.5, 0, 1])
+var ground = new webgpu.Box(0, -0.05 - 0.4, 0, 20, 0.1, 20, [0, 0.5, 0, 1])
 ground.oneSide = true
 ground.material.diffuse = [0, 0, 0]
 ground.material.ambient = [0.7, 0.7, 0.7]
-
 var ttest1 = new webgpu.Box(-2, 1, 4, 1, 1, 1, [1, 1, 1, 0.5])
 var ttest2 = new webgpu.Box(0, 1, 4, 1, 1, 1, [0, 1, 0, 0.5])
 var ttest3 = new webgpu.Box(2, 1, 4, 1, 1, 1, [0, 0, 1, 0.5])
@@ -191,6 +190,9 @@ var house = [
 
     new webgpu.Box(4.5, 0, 0, 1, 0.1, 1.5, [0.6, 0.5, 0, houseAlpha]),
 ]
+for (let mesh of house) {
+    mesh.material.ambient = [0, 0, 0]
+}
 if (houseAlpha < 1) {
     for (let mesh of house) {
         mesh.transparent = true
@@ -329,6 +331,13 @@ var winner = new webgpu.Box(0, 100, 10, 5, 0.1, 5, [1, 1, 0, 1])
 var players = {}
 
 var sendDT = 0
+
+var lights = []
+
+webgpu.lights.push({pos: [7.5, 2, 0], colour: [0, 0, 1], range: 3})
+webgpu.lights.push({pos: [7.5, 2, 5], colour: [2, 0, 0], range: 5})
+lights.push(new webgpu.Sphere(7.5, 2, 0, 0.2, [1, 1, 1], 10))
+lights.push(new webgpu.Sphere(7.5, 2, 5, 0.2, [1, 1, 1], 10))
 
 function frame(timestamp) {
     let start = performance.now()

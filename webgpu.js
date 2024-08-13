@@ -54,6 +54,12 @@ class WebGPU {
             colour: vec3<f32>
         }
 
+        struct PointLight {
+            pos: vec3<f32>,
+            colour: vec3<f32>,
+            range: f32
+        }
+
         struct Material {
             ambient: vec3<f32>,
             diffuse: vec3<f32>,
@@ -67,7 +73,8 @@ class WebGPU {
             light: Light,
             camera: vec3<f32>,
             lightView: mat4x4<f32>,
-            bias: f32
+            bias: f32,
+            lights: f32
         }
 
         struct Obj {
@@ -84,6 +91,8 @@ class WebGPU {
 
         @group(0) @binding(3) var shadowTexture: texture_depth_2d;
         @group(0) @binding(4) var shadowSampler: sampler_comparison;
+
+        @group(0) @binding(5) var<storage, read> lights: array<PointLight>;
 
         // @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
         // @group(0) @binding(1) var<uniform> uProjection: mat4x4<f32>;
@@ -187,19 +196,40 @@ class WebGPU {
                 shadowFactor = min((1.0 - shadow) + 0.1, 1.0);
             }
 
-            let colour = ambient + (diffuse + specular) * shadowFactor;
+           
 
-            return vertexColour * vec4f(colour, 1);
+            // var i = 0u;
+            // let maxLights = 1000u;
+
+            // while (i < uScene.lights && i < maxLights) {
+            //     colour += diffuse * lights[i].colour;
+            //     i += 1u;
+            // }
+            // colour *= lights[0].colour;
+
+            let colour = ambient + (diffuse + specular) * shadowFactor;
+            var lit = vec3f(0, 0, 0);
+
+            for (var i = 0.0; i < uScene.lights; i += 1.0) {
+                let d = sqrt(pow(fragData.pos.x-lights[u32(i)].pos.x, 2) + pow(fragData.pos.y-lights[u32(i)].pos.y, 2) + pow(fragData.pos.z-lights[u32(i)].pos.z, 2)) / lights[u32(i)].range;
+                let factor = min(d, 1);
+                lit += lights[u32(i)].colour * (1.0 - factor);
+            }
+
+            
+
+            return vertexColour * vec4f(colour, 1) + vec4f(lit, 0);
             // return vec4f(uScene.camera.y, 0, 0, 1);
         }
     `
     dShaderName = "default"
     dUniforms = {
-        scene: [null, 0, 64*4, 2, true],
+        scene: [null, 0, 65*4, 2, true],
         obj: [null, 1, 49*4, 2, false],
         texture: [null, 2, 0, 1, false, true, {texture: {sampleType: "float"}}],
         shadowTexture: [null, 3, 0, 1, false, true, {texture: {sampleType: "depth"}}],
         shadowSampler: [null, 4, 0, 1, false, true, {sampler: {type: "comparison"}}],
+        lights: [null, 5, 0, 1, true, false, {buffer: {type: "read-only-storage"}}],
     }
     dUGroups = {
         scene: 2
@@ -260,6 +290,11 @@ class WebGPU {
             shininess: f32,
         }
 
+        struct PointLight {
+            pos: vec3<f32>,
+            colour: vec3<f32>,
+            range: f32
+        }
 
         struct Scene {
             view: mat4x4<f32>,
@@ -268,6 +303,7 @@ class WebGPU {
             camera: vec3<f32>,
             lightView: mat4x4<f32>,
             bias: f32,
+            lights: f32
         }
 
         struct Obj {
@@ -284,6 +320,8 @@ class WebGPU {
 
         @group(0) @binding(3) var shadowTexture: texture_depth_2d;
         @group(0) @binding(4) var shadowSampler: sampler_comparison;
+
+        @group(0) @binding(5) var<storage, read> lights: array<PointLight>;
 
         // @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
         // @group(0) @binding(1) var<uniform> uProjection: mat4x4<f32>;
@@ -345,7 +383,17 @@ class WebGPU {
 
         let colour = ambient + diffuse + specular;
 
-        let color = vertexColour * vec4f(colour, 1);
+        var lit = vec3f(0, 0, 0);
+
+        for (var i = 0.0; i < uScene.lights; i += 1.0) {
+            let d = sqrt(pow(fragData.pos.x-lights[u32(i)].pos.x, 2) + pow(fragData.pos.y-lights[u32(i)].pos.y, 2) + pow(fragData.pos.z-lights[u32(i)].pos.z, 2)) / lights[u32(i)].range;
+            let factor = min(d, 1);
+            lit += lights[u32(i)].colour * (1.0 - factor);
+        }
+
+        
+
+        let color =  vertexColour * vec4f(colour, 1) + vec4f(lit, 0);
     `
     tUniforms = {
         scene: [null, 0, 64*4, 2, true],
@@ -353,6 +401,7 @@ class WebGPU {
         texture: [null, 2, 0, 1, false, true, {texture: {sampleType: "float"}}],
         shadowTexture: [null, 3, 0, 1, false, true, {texture: {sampleType: "depth"}}],
         shadowSampler: [null, 4, 0, 1, false, true, {sampler: {type: "comparison"}}],
+        lights: [null, 5, 0, 1, true, false, {buffer: {type: "read-only-storage"}}],
     }
     tFragmentConfig = {
         entryPoint: "fragment_main",
@@ -537,6 +586,9 @@ class WebGPU {
     shaders = {}
     samplers = []
     meshes = []
+    lights = []
+    lLights = 0
+    updateLights = true
     textures = []
     cUseTexture = null 
     ready = false
@@ -608,6 +660,20 @@ class WebGPU {
         })
         this.shadowView = this.shadowTexture.createView()
 
+        let lights = [0, 0, 0, 0, 1, 1, 1, 0, 3]
+
+        this.lightsBuffer = device.createBuffer({
+            size: lights.length * Float32Array.BYTES_PER_ELEMENT,
+            usage: GPUBufferUsage.STORAGE,
+            mappedAtCreation: true
+        })
+
+        var buffer = new Uint32Array(this.lightsBuffer.getMappedRange())
+        for (let i = 0; i < buffer.length; i++) {
+            buffer[i] = lights[i]
+        }
+        this.lightsBuffer.unmap()
+
         for (let texture of this.textures) {
             texture.init(texture.src)
         }
@@ -622,6 +688,12 @@ class WebGPU {
 
         this.createShader("default", this.dShaders, this.dUniforms, this.vertexConfig, this.fragmentConfig, this.dPipelineConfig, this.dUGroups)
 
+        for (let shader in this.shaders) {
+            if ("lights" in this.shaders[shader].uniforms) {
+                this.shaders[shader].uniforms.lights[0] = this.lightsBuffer
+            }
+        }
+
         for (let mesh of this.meshes) {
             this.createShader(mesh.shaderName, mesh.shaders, mesh.uniforms, mesh.vertexConfig, mesh.fragmentConfig, mesh.pipelineConfig)
             let bindGroupLayout = this.shaders[mesh.shaderName].bindGroupLayout
@@ -633,11 +705,11 @@ class WebGPU {
             mesh.updateBuffers()
         }
 
-        let tShaders = this.createDepthPeelingShaders(13, this.tTop, this.tVertex, this.tFragment)
-        let tUniforms = this.createDepthPeelingUniforms(13, this.tUniforms)
+        let tShaders = this.createDepthPeelingShaders(6, this.tTop, this.tVertex, this.tFragment)
+        let tUniforms = this.createDepthPeelingUniforms(6, this.tUniforms)
 
-        let tdShaders = this.createDualDepthPeelingShaders(13, this.tTop, this.tVertex, this.tFragment)
-        let tdUniforms = this.createDualDepthPeelingUniforms(13, this.tUniforms)
+        let tdShaders = this.createDualDepthPeelingShaders(6, this.tTop, this.tVertex, this.tFragment)
+        let tdUniforms = this.createDualDepthPeelingUniforms(6, this.tUniforms)
 
         this.depthPeelingShaders = tShaders
         this.dualDepthPeelingShaders = tdShaders
@@ -1091,7 +1163,9 @@ class WebGPU {
 
         let shadowSize = this.shadowSize
 
-        if (cresized || newMethod) {
+        if (cresized || newMethod || this.lights.length != this.lLights) {
+            this.lLights = this.lights.length
+            this.updateLights = true
             this.depthTexture = device.createTexture({
                 size: [gpucanvas.width, gpucanvas.height],
                 format: "depth24plus",
@@ -1240,20 +1314,6 @@ class WebGPU {
                 })
             }
 
-            for (let mesh of transparent) {
-                for (let i = 0; i < realDepthLayers; i++) delete mesh.bindGroups[i]
-                mesh.shaderName = "default"
-            }
-
-            for (let mesh of this.meshes) {
-                if (mesh == this.debugMesh || mesh == this.finalMesh || mesh == this.blendMesh) continue
-                if (mesh.texture && mesh.texture.loaded) {
-                    mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [mesh.texture.texture.createView(), this.shadowView, this.shadowSampler])
-                } else {
-                    mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.dTexture.createView(), this.shadowView, this.shadowSampler])
-                }
-            }
-
             this.drawnBuffer = device.createBuffer({
                 size: realDepthLayers * Uint32Array.BYTES_PER_ELEMENT,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
@@ -1269,6 +1329,31 @@ class WebGPU {
                 buffer[i] = 0
             }
             this.drawnInitBuffer.unmap()
+
+            this.lightsBuffer = device.createBuffer({
+                size: this.lights.length * 8 * Float32Array.BYTES_PER_ELEMENT,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            })
+
+            for (let shader in this.shaders) {
+                if ("lights" in this.shaders[shader].uniforms) {
+                    this.shaders[shader].uniforms.lights[0] = this.lightsBuffer
+                }
+            }
+
+            for (let mesh of transparent) {
+                for (let i = 0; i < realDepthLayers; i++) delete mesh.bindGroups[i]
+                mesh.shaderName = "default"
+            }
+
+            for (let mesh of this.meshes) {
+                if (mesh == this.debugMesh || mesh == this.finalMesh || mesh == this.blendMesh) continue
+                if (mesh.texture && mesh.texture.loaded) {
+                    mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [mesh.texture.texture.createView(), this.shadowView, this.shadowSampler])
+                } else {
+                    mesh.createBindGroup(this.shaders[mesh.shaderName].bindGroupLayout, [this.dTexture.createView(), this.shadowView, this.shadowSampler])
+                }
+            }
         }
 
         var depthTextureView = this.depthTexture.createView()
@@ -1326,7 +1411,34 @@ class WebGPU {
 
         let shadowView2 = mat4.multiply(mat4.create(), shadowProjection, shadowViewProjection[1])
 
-        let sceneBuffer = new Float32Array([...shadowViewProjection[1], ...shadowProjection, ...this.lightBuffer, ...this.cameraBuffer, ...shadowView2, this.bias])
+        if (this.updateLights) {
+            this.updateLights = false
+            let lights = []
+            for (let light of this.lights) {
+                lights.push(...light.pos, 0, ...light.colour, light.range)
+            }
+
+            let lightsBuffer = device.createBuffer({
+                size: lights.length * Float32Array.BYTES_PER_ELEMENT,
+                usage: GPUBufferUsage.COPY_SRC,
+                mappedAtCreation: true
+            })
+
+            var buffer = new Float32Array(lightsBuffer.getMappedRange())
+            for (let i = 0; i < buffer.length; i++) {
+                buffer[i] = lights[i]
+            }
+            lightsBuffer.unmap()
+
+            commandEncoder.copyBufferToBuffer(lightsBuffer, 0, this.lightsBuffer, 0, lightsBuffer.size)
+        }
+       
+
+       
+
+        // let lightsBuffer = new Float32Array(lights)
+
+        let sceneBuffer = new Float32Array([...shadowViewProjection[1], ...shadowProjection, ...this.lightBuffer, ...this.cameraBuffer, ...shadowView2, this.bias, this.lights.length])
 
         // this.setGlobalUniform("view", shadowViewProjection[1])
         // this.setGlobalUniform("projection", shadowProjection)
@@ -1362,7 +1474,7 @@ class WebGPU {
 
         this.setGroup(this.meshes, 0)
 
-        sceneBuffer = new Float32Array([...(fromLight ? shadowViewProjection[1] : viewProjection[1]), ...(fromLight ? shadowProjection : viewProjection[0]), ...this.lightBuffer, ...this.cameraBuffer, ...shadowView2, this.bias])
+        sceneBuffer = new Float32Array([...(fromLight ? shadowViewProjection[1] : viewProjection[1]), ...(fromLight ? shadowProjection : viewProjection[0]), ...this.lightBuffer, ...this.cameraBuffer, ...shadowView2, this.bias, this.lights.length])
 
         this.setGlobalUniform("scene", sceneBuffer)
 

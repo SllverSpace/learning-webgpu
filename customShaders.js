@@ -12,13 +12,20 @@ var grassShaders = `
         shininess: f32,
     }
 
+    struct PointLight {
+        pos: vec3<f32>,
+        colour: vec3<f32>,
+        range: f32
+    }
+
     struct Scene {
         view: mat4x4<f32>,
         projection: mat4x4<f32>,
         light: Light,
         camera: vec3<f32>,
         lightView: mat4x4<f32>,
-        bias: f32
+        bias: f32,
+        lights: f32
     }
 
     struct Obj {
@@ -36,7 +43,9 @@ var grassShaders = `
     @group(0) @binding(3) var shadowTexture: texture_depth_2d;
     @group(0) @binding(4) var shadowSampler: sampler_comparison;
 
-    @group(0) @binding(5) var<uniform> time: f32;
+    @group(0) @binding(5) var<storage, read> lights: array<PointLight>;
+
+    @group(0) @binding(6) var<uniform> time: f32;
     
     // @group(0) @binding(0) var<uniform> uView: mat4x4<f32>;
     // @group(0) @binding(1) var<uniform> uProjection: mat4x4<f32>;
@@ -211,7 +220,17 @@ var grassShaders = `
 
         let colour = ambient + (diffuse + specular) * shadowFactor;
 
-        return vertexColour * vec4f(colour, 1);
+        var lit = vec3f(0, 0, 0);
+
+        for (var i = 0.0; i < uScene.lights; i += 1.0) {
+            let d = sqrt(pow(fragData.pos.x-lights[u32(i)].pos.x, 2) + pow(fragData.pos.y-lights[u32(i)].pos.y, 2) + pow(fragData.pos.z-lights[u32(i)].pos.z, 2)) / lights[u32(i)].range;
+            let factor = min(d, 1);
+            lit += lights[u32(i)].colour * (1.0 - factor);
+        }
+
+        
+
+        return vertexColour * vec4f(colour, 1) + vec4f(lit, 0);
     }
 `
 var grassVertexConfig = {
@@ -255,5 +274,6 @@ var grassUniforms = {
     texture: [null, 2, 0, 1, false, true, {texture: {sampleType: "float"}}],
     shadowTexture: [null, 3, 0, 1, false, true, {texture: {sampleType: "depth"}}],
     shadowSampler: [null, 4, 0, 1, false, true, {sampler: {type: "comparison"}}],
-    time: [null, 5, 4, 0, true],
+    lights: [null, 5, 0, 1, true, false, {buffer: {type: "read-only-storage"}}],
+    time: [null, 6, 4, 0, true],
 }
