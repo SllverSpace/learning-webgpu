@@ -531,7 +531,9 @@ function frame(timestamp) {
         cornerMeshes[i].pos = {x: corners[i][0], y: corners[i][1], z: corners[i][2]}
     }
 
-    let timeBuffer = new Float32Array([time])
+    // console.log(time)
+
+    let timeBuffer = new Float32Array([time % 100000])
     device.queue.writeBuffer(webgpu.shaders.grass.uniforms.time[0], 0, timeBuffer, 0, timeBuffer.length)
     webgpu.render([0.4, 0.8, 1, 1])
 
